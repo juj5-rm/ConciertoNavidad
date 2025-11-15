@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import api from "./api";
-import { QRCodeSVG } from "qrcode.react";
+import BoletaDigital from "./BoletaDigital";
 
 function Registro() {
   const [adultos, setAdultos] = useState(0);
@@ -43,9 +43,27 @@ function Registro() {
       return;
     }
 
-    const grupo = [...adultosData, ...ninosData];
-    const res = await api.post("/asistentes/grupo", { grupo });
-    setQrsGenerados(res.data.qrs);
+    // Crear grupo con tipo
+    const grupo = [
+      ...adultosData.map((a) => ({
+        ...a,
+        tipo: "adulto",
+        nacimiento: null,
+      })),
+      ...ninosData.map((n) => ({
+        ...n,
+        tipo: "niño",
+        correo: null,
+        identificacion: null,
+      })),
+    ];
+
+    try {
+      const res = await api.post("/asistentes/grupo", { grupo });
+      setQrsGenerados(res.data.qrs);
+    } catch (err) {
+      alert("Error: " + err.response?.data || "Error inesperado");
+    }
   };
 
   return (
@@ -98,7 +116,9 @@ function Registro() {
                     type="text"
                     placeholder="Nombre"
                     value={a.nombre}
-                    onChange={(e) => actualizarAdulto(i, "nombre", e.target.value)}
+                    onChange={(e) =>
+                      actualizarAdulto(i, "nombre", e.target.value)
+                    }
                     required
                     className="border p-1 rounded w-full mb-2"
                   />
@@ -106,7 +126,9 @@ function Registro() {
                     type="email"
                     placeholder="Correo"
                     value={a.correo}
-                    onChange={(e) => actualizarAdulto(i, "correo", e.target.value)}
+                    onChange={(e) =>
+                      actualizarAdulto(i, "correo", e.target.value)
+                    }
                     required
                     className="border p-1 rounded w-full mb-2"
                   />
@@ -130,7 +152,9 @@ function Registro() {
                     type="text"
                     placeholder="Nombre"
                     value={n.nombre}
-                    onChange={(e) => actualizarNino(i, "nombre", e.target.value)}
+                    onChange={(e) =>
+                      actualizarNino(i, "nombre", e.target.value)
+                    }
                     required
                     className="border p-1 rounded w-full mb-2"
                   />
@@ -157,9 +181,9 @@ function Registro() {
                     onChange={(e) => setAcepta(e.target.checked)}
                     className="mt-1 mr-2"
                   />
-                  Acepto el tratamiento de mis datos personales conforme a la Ley
-                  1581 de 2012 y autorizo el uso de mi información para fines
-                  relacionados con este evento.
+                  Acepto el tratamiento de mis datos personales conforme a la
+                  Ley 1581 de 2012 y autorizo el uso de mi información para
+                  fines relacionados con este evento.
                 </label>
               </div>
 
@@ -175,15 +199,17 @@ function Registro() {
       ) : (
         <div className="text-center">
           <h3 className="font-semibold mb-3">🎉 Registro exitoso</h3>
-          <p className="mb-3">Estos son tus códigos QR:</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            {qrsGenerados.map((qr, i) => (
-              <div key={i} className="p-2 border rounded">
-                <QRCodeSVG value={qr} size={140} />
-                <p className="text-xs mt-1">{qr}</p>
-              </div>
-            ))}
-          </div>
+          <p className="mb-3">Estos son tus boletas digitales:</p>
+
+          {qrsGenerados.map((qr, i) => (
+            <BoletaDigital
+              key={i}
+              nombre={qr.nombre}
+              documento={qr.identificacion || "N/A"}
+              qr={qr.qr}
+              numeroBoleta={qr.numero_boleta}
+            />
+          ))}
         </div>
       )}
     </div>

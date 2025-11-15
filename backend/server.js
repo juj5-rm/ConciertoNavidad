@@ -75,90 +75,111 @@ app.post("/api/asistentes", async (req, res) => {
   }
 });
 
+async function obtenerSiguienteNumeroBoleta(client) {
+  const result = await client.query(`
+    SELECT MAX(numero_boleta) AS max FROM asistentes;
+  `);
+
+  let siguiente = (result.rows[0].max || 0) + 1;
+
+  if (siguiente > 230) {
+    throw new Error("❌ Se alcanzó el límite máximo de 230 boletas");
+  }
+
+  return siguiente;
+}
+
 // Registrar grupo
 app.post("/api/asistentes/grupo", async (req, res) => {
   const { grupo } = req.body;
 
   if (!Array.isArray(grupo) || grupo.length === 0)
-    return res.status(400).json({
-      error: "Debe enviar un grupo válido de asistentes",
-    });
+    return res.status(400).json({ error: "Debe enviar un grupo válido" });
 
-  const idLider = uuidv4();
-  const codigoLider = uuidv4();
-
-  const qrsGenerados = [];
+  const client = await pool.connect();
 
   try {
-    // 1. Guardar líder (primera posición)
+    await client.query("BEGIN");
+
+    const idLider = uuidv4();
+    const codigoLider = uuidv4();
+    const qrsGenerados = [];
+
+    // ⭐ Obtener siguiente número de boleta
+    let numeroBoleta = await obtenerSiguienteNumeroBoleta(client);
+
     const lider = grupo[0];
 
-    if (!lider.nombre || !lider.correo || !lider.identificacion)
-      return res
-        .status(400)
-        .send("El líder del grupo debe tener nombre, correo e identificación");
-
-    const resultLider = await pool.query(
-      `INSERT INTO asistentes (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo) 
-       VALUES ($1,$2,$3,$4,'adulto',$5,NULL) RETURNING *`,
-      [idLider, lider.nombre, lider.correo, lider.identificacion, codigoLider]
+    const resultLider = await client.query(
+      `INSERT INTO asistentes 
+      (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo, numero_boleta)
+      VALUES ($1,$2,$3,$4,'adulto',$5,NULL,$6)
+      RETURNING *`,
+      [idLider, lider.nombre, lider.correo, lider.identificacion, codigoLider, numeroBoleta]
     );
 
-    qrsGenerados.push(codigoLider);
+    qrsGenerados.push({
+      qr: codigoLider,
+      nombre: lider.nombre,
+      numero_boleta: numeroBoleta,
+    });
 
-    // 2. Guardar los demás miembros
+    // Aumentar boleta para el siguiente integrante
+    numeroBoleta++;
+
+    // Insertar miembros
     for (let i = 1; i < grupo.length; i++) {
       const p = grupo[i];
       const idMiembro = uuidv4();
       const codigo = uuidv4();
 
-      // Niño
-      if (p.nacimiento) {
-        if (!p.nombre)
-          return res.status(400).send("Cada niño debe tener nombre");
+      if (numeroBoleta > 230)
+        throw new Error("❌ Se alcanzó el límite máximo de 230 boletas");
 
-        if (!esMenorDe7(p.nacimiento))
-          return res.status(400).send("Un niño debe ser menor de 7 años");
-
-        await pool.query(
+      if (p.tipo === "niño") {
+        await client.query(
           `INSERT INTO asistentes 
-           (id, nombre, nacimiento, tipo, codigo_qr, id_grupo)
-           VALUES ($1,$2,$3,'niño',$4,$5)`,
-          [idMiembro, p.nombre, p.nacimiento, codigo, idLider]
+          (id, nombre, nacimiento, tipo, codigo_qr, id_grupo, numero_boleta)
+          VALUES ($1,$2,$3,'niño',$4,$5,$6)`,
+          [idMiembro, p.nombre, p.nacimiento, codigo, idLider, numeroBoleta]
         );
       } else {
-        // Adulto adicional
-        if (!p.nombre || !p.correo || !p.identificacion)
-          return res
-            .status(400)
-            .send(
-              "En adultos del grupo: nombre, correo e identificación son obligatorios"
-            );
-
-        await pool.query(
+        await client.query(
           `INSERT INTO asistentes 
-           (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo)
-           VALUES ($1,$2,$3,$4,'adulto',$5,$6)`,
-          [idMiembro, p.nombre, p.correo, p.identificacion, codigo, idLider]
+          (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo, numero_boleta)
+          VALUES ($1,$2,$3,$4,'adulto',$5,$6,$7)`,
+          [idMiembro, p.nombre, p.correo, p.identificacion, codigo, idLider, numeroBoleta]
         );
       }
 
-      qrsGenerados.push(codigo);
+      qrsGenerados.push({
+        qr: codigo,
+        nombre: p.nombre,
+        numero_boleta: numeroBoleta,
+      });
+
+      numeroBoleta++;
     }
 
-    res.json({ lider: resultLider.rows[0], qrs: qrsGenerados });
+    await client.query("COMMIT");
+    res.json({ qrs: qrsGenerados });
+
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
-    res.status(500).send("Error al registrar el grupo");
+    res.status(400).send(err.message);
+  } finally {
+    client.release();
   }
 });
+
 
 // Buscar por documento y retornar grupo si aplica
 app.get("/api/asistentes/documento/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Buscar asistente principal
+    // Buscar asistente por documento
     const busqueda = await pool.query(
       "SELECT * FROM asistentes WHERE identificacion = $1",
       [id]
@@ -169,40 +190,55 @@ app.get("/api/asistentes/documento/:id", async (req, res) => {
 
     const asistente = busqueda.rows[0];
 
-    // Si es líder de grupo
+    let lider;
+    let grupo;
+
+    // 🔹 Si el asistente es el líder
     if (asistente.id_grupo === null) {
-      const miembros = await pool.query(
+      lider = asistente;
+
+      grupo = await pool.query(
         "SELECT * FROM asistentes WHERE id_grupo = $1",
         [asistente.id]
       );
 
-      return res.json({
-        tipo: "lider",
-        lider: asistente,
-        grupo: miembros.rows,
-      });
+    } else {
+      // 🔹 Si es miembro
+      const liderResult = await pool.query(
+        "SELECT * FROM asistentes WHERE id = $1",
+        [asistente.id_grupo]
+      );
+
+      lider = liderResult.rows[0];
+
+      grupo = await pool.query(
+        "SELECT * FROM asistentes WHERE id_grupo = $1",
+        [asistente.id_grupo]
+      );
     }
 
-    // Si es miembro, buscar al líder y todo el grupo
-    const lider = await pool.query("SELECT * FROM asistentes WHERE id = $1", [
-      asistente.id_grupo,
-    ]);
+    // ⭐ Unificar líder + grupo en una sola estructura
+    const todos = [lider, ...grupo.rows];
 
-    const miembros = await pool.query(
-      "SELECT * FROM asistentes WHERE id_grupo = $1",
-      [asistente.id_grupo]
-    );
+    // ⭐ Formato de boletas para el frontend
+    const boletas = todos.map((p) => ({
+      nombre: p.nombre,
+      qr: p.codigo_qr,
+      numero_boleta: p.numero_boleta,
+    }));
 
-    res.json({
-      tipo: "miembro",
-      lider: lider.rows[0],
-      grupo: miembros.rows,
+    return res.json({
+      lider,
+      grupo: grupo.rows,
+      boletas,
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).send("Error en la búsqueda");
   }
 });
+
 
 // Obtener todos
 app.get("/api/asistentes", async (req, res) => {

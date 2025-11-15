@@ -1,0 +1,118 @@
+/* Oculta el DOM real para exportar */
+.hidden-boleta {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+}
+
+/* ---------------------- PREVIEW ---------------------- */
+
+.preview-wrapper {
+  width: 95vw;
+  max-width: 600px;
+}
+
+.boleta-visible {
+  width: 100%;
+  aspect-ratio: 2000 / 647;
+  position: relative;
+  overflow: hidden;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  color: white;
+  padding: 20px;
+}
+
+.qr-box {
+  position: absolute;
+  right: 30px;
+  top: 30px;
+  background: white;
+  padding: 10px;
+  border-radius: 15px;
+}
+
+/* ---------------------- EXPORT REAL ---------------------- */
+
+.boleta-real {
+  position: relative;
+}
+
+.abs {
+  position: absolute;
+  color: white;
+  font-family: sans-serif;
+}
+
+.nombre {
+  text-align: center;
+  font-size: 40px;
+  font-weight: bold;
+  width: 607px;
+}
+
+.documento {
+  top: 230px;
+  left: 200px;
+  font-size: 40px;
+}
+
+.qr {
+  top: 30px;
+  right: 40px;
+}
+
+.id {
+  font-size: 30px;
+}
+
+.numero-boleta {
+  color: black;
+  font-weight: bold;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 400px;
+  height: 200px;
+  top: 370px;
+  right: 0px;
+  font-size: 50px;
+}
+
+.numero-boleta div {
+  font-size: 100px;
+  color: #a38864;
+}
+
+.content {
+  width: 400px;
+  height: 647px;
+  top: 0px;
+  left: 0px;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* importante */
+  color: white;
+  padding: 20px;
+}
+
+/* Rotar -90 grados todo lo interno */
+.content-rotado {
+  transform: rotate(-90deg);
+  transform-origin: center center;
+  width: 607px;
+  /* Intercambiamos para compensar la rotación */
+  height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 35px;
+}
