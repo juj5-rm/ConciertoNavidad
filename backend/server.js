@@ -122,6 +122,7 @@ app.post("/api/asistentes/grupo", async (req, res) => {
       qr: codigoLider,
       nombre: lider.nombre,
       numero_boleta: numeroBoleta,
+      identificacion: lider.identificacion,
     });
 
     // Aumentar boleta para el siguiente integrante
@@ -156,6 +157,7 @@ app.post("/api/asistentes/grupo", async (req, res) => {
         qr: codigo,
         nombre: p.nombre,
         numero_boleta: numeroBoleta,
+        identificacion: p.identificacion || null,
       });
 
       numeroBoleta++;
