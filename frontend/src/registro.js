@@ -193,7 +193,7 @@ function Registro() {
                 type="submit"
                 className="mt-4 bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700"
               >
-                Registrar grupo
+                Registrar
               </button>
             </form>
           )}
