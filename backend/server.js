@@ -82,8 +82,8 @@ async function obtenerSiguienteNumeroBoleta(client) {
 
   let siguiente = (result.rows[0].max || 0) + 1;
 
-  if (siguiente > 230) {
-    throw new Error("❌ Se alcanzó el límite máximo de 230 boletas");
+  if (siguiente > 225) {
+    throw new Error("❌ Se alcanzó el límite máximo de 225 boletas");
   }
 
   return siguiente;
@@ -134,8 +134,8 @@ app.post("/api/asistentes/grupo", async (req, res) => {
       const idMiembro = uuidv4();
       const codigo = uuidv4();
 
-      if (numeroBoleta > 230)
-        throw new Error("❌ Se alcanzó el límite máximo de 230 boletas");
+      if (numeroBoleta > 225)
+        throw new Error("❌ Se alcanzó el límite máximo de 225 boletas");
 
       if (p.tipo === "niño") {
         await client.query(
