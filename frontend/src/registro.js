@@ -3,7 +3,7 @@ import api from "./api";
 import BoletaDigital from "./BoletaDigital";
 
 function Registro() {
-  const [adultos, setAdultos] = useState(0);
+  const [adultos, setAdultos] = useState(1);
   const [ninos, setNinos] = useState(0);
   const [adultosData, setAdultosData] = useState([]);
   const [ninosData, setNinosData] = useState([]);
@@ -81,8 +81,9 @@ function Registro() {
               <input
                 type="number"
                 value={adultos}
-                onChange={(e) => setAdultos(parseInt(e.target.value) || 0)}
-                min="0"
+                placeholder="0"
+                onChange={(e) => setAdultos(parseInt(e.target.value))}
+                min="1"
                 className="border p-1 ml-2 rounded w-20"
               />
             </label>
@@ -90,8 +91,9 @@ function Registro() {
               Niños (menores de 7 años):
               <input
                 type="number"
+                placeholder="0"
                 value={ninos}
-                onChange={(e) => setNinos(parseInt(e.target.value) || 0)}
+                onChange={(e) => setNinos(parseInt(e.target.value))}
                 min="0"
                 className="border p-1 ml-2 rounded w-20"
               />
