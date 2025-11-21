@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import api from "./api";
 import BoletaDigital from "./BoletaDigital";
+import "./registro.css";
 
 function Registro() {
   const [adultos, setAdultos] = useState(1);
@@ -9,6 +10,7 @@ function Registro() {
   const [ninosData, setNinosData] = useState([]);
   const [acepta, setAcepta] = useState(false);
   const [qrsGenerados, setQrsGenerados] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const handleContinuar = () => {
     const nuevosAdultos = Array.from({ length: adultos }, () => ({
@@ -43,7 +45,8 @@ function Registro() {
       return;
     }
 
-    // Crear grupo con tipo
+    setLoading(true); // ⬅️ BLOQUEA TODO
+
     const grupo = [
       ...adultosData.map((a) => ({
         ...a,
@@ -62,12 +65,20 @@ function Registro() {
       const res = await api.post("/asistentes/grupo", { grupo });
       setQrsGenerados(res.data.qrs);
     } catch (err) {
-      alert("Error: " + err.response?.data || "Error inesperado");
+      alert("Error: " + (err.response?.data || "Error inesperado"));
+    } finally {
+      setLoading(false); // ⬅️ DESBLOQUEA
     }
   };
 
   return (
     <div className="max-w-3xl mx-auto">
+      {loading && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+          <div className="loader border-4 border-gray-300 border-t-blue-600 rounded-full w-16 h-16 animate-spin"></div>
+        </div>
+      )}
+
       <h2 className="text-xl font-semibold mb-4 text-center">
         Registro de Entradas Gratuitas 🎟️
       </h2>
