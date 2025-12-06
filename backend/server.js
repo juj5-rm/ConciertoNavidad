@@ -24,6 +24,23 @@ function esMenorDe7(fechaNacimiento) {
   return edad < 7;
 }
 
+async function obtenerPrimerNumeroLibre(client) {
+  const result = await client.query(`
+    SELECT numero_boleta FROM asistentes
+    WHERE numero_boleta IS NOT NULL
+    ORDER BY numero_boleta ASC
+  `);
+
+  const usados = result.rows.map((r) => r.numero_boleta);
+
+  // Buscar el primer número libre desde 1 hasta 225
+  for (let i = 1; i <= 225; i++) {
+    if (!usados.includes(i)) return i;
+  }
+
+  throw new Error("❌ No hay boletas disponibles");
+}
+
 // Crear un asistente individual
 app.post("/api/asistentes", async (req, res) => {
   const { nombre, correo, identificacion, nacimiento, tipo } = req.body;
@@ -106,7 +123,7 @@ app.post("/api/asistentes/grupo", async (req, res) => {
     const qrsGenerados = [];
 
     // ⭐ Obtener siguiente número de boleta
-    let numeroBoleta = await obtenerSiguienteNumeroBoleta(client);
+    let numeroBoleta = await obtenerPrimerNumeroLibre(client);
 
     const lider = grupo[0];
 
@@ -115,7 +132,14 @@ app.post("/api/asistentes/grupo", async (req, res) => {
       (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo, numero_boleta)
       VALUES ($1,$2,$3,$4,'adulto',$5,NULL,$6)
       RETURNING *`,
-      [idLider, lider.nombre, lider.correo, lider.identificacion, codigoLider, numeroBoleta]
+      [
+        idLider,
+        lider.nombre,
+        lider.correo,
+        lider.identificacion,
+        codigoLider,
+        numeroBoleta,
+      ]
     );
 
     qrsGenerados.push({
@@ -126,7 +150,7 @@ app.post("/api/asistentes/grupo", async (req, res) => {
     });
 
     // Aumentar boleta para el siguiente integrante
-    numeroBoleta++;
+    numeroBoleta = await obtenerPrimerNumeroLibre(client);
 
     // Insertar miembros
     for (let i = 1; i < grupo.length; i++) {
@@ -149,7 +173,15 @@ app.post("/api/asistentes/grupo", async (req, res) => {
           `INSERT INTO asistentes 
           (id, nombre, correo, identificacion, tipo, codigo_qr, id_grupo, numero_boleta)
           VALUES ($1,$2,$3,$4,'adulto',$5,$6,$7)`,
-          [idMiembro, p.nombre, p.correo, p.identificacion, codigo, idLider, numeroBoleta]
+          [
+            idMiembro,
+            p.nombre,
+            p.correo,
+            p.identificacion,
+            codigo,
+            idLider,
+            numeroBoleta,
+          ]
         );
       }
 
@@ -165,7 +197,6 @@ app.post("/api/asistentes/grupo", async (req, res) => {
 
     await client.query("COMMIT");
     res.json({ qrs: qrsGenerados });
-
   } catch (err) {
     await client.query("ROLLBACK");
     console.error(err);
@@ -174,7 +205,6 @@ app.post("/api/asistentes/grupo", async (req, res) => {
     client.release();
   }
 });
-
 
 // Buscar por documento y retornar grupo si aplica
 app.get("/api/asistentes/documento/:id", async (req, res) => {
@@ -199,11 +229,9 @@ app.get("/api/asistentes/documento/:id", async (req, res) => {
     if (asistente.id_grupo === null) {
       lider = asistente;
 
-      grupo = await pool.query(
-        "SELECT * FROM asistentes WHERE id_grupo = $1",
-        [asistente.id]
-      );
-
+      grupo = await pool.query("SELECT * FROM asistentes WHERE id_grupo = $1", [
+        asistente.id,
+      ]);
     } else {
       // 🔹 Si es miembro
       const liderResult = await pool.query(
@@ -213,10 +241,9 @@ app.get("/api/asistentes/documento/:id", async (req, res) => {
 
       lider = liderResult.rows[0];
 
-      grupo = await pool.query(
-        "SELECT * FROM asistentes WHERE id_grupo = $1",
-        [asistente.id_grupo]
-      );
+      grupo = await pool.query("SELECT * FROM asistentes WHERE id_grupo = $1", [
+        asistente.id_grupo,
+      ]);
     }
 
     // ⭐ Unificar líder + grupo en una sola estructura
@@ -234,20 +261,23 @@ app.get("/api/asistentes/documento/:id", async (req, res) => {
       grupo: grupo.rows,
       boletas,
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).send("Error en la búsqueda");
   }
 });
 
-
 // Obtener todos
 app.get("/api/asistentes", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM asistentes ORDER BY nombre ASC"
-    );
+    const result = await pool.query(`
+      SELECT *
+      FROM asistentes
+      ORDER BY 
+        COALESCE(id_grupo, id) ASC,   -- agrupa por líder
+        numero_boleta ASC             -- ordena dentro del grupo
+    `);
+
     res.json(result.rows);
   } catch (err) {
     console.error(err);
