@@ -74,6 +74,16 @@ La edad menor de 7 anos se valida en NestJS: no se agrega una expresion `CHECK` 
 - `npm run bootstrap:admin` crea el primer administrador solo cuando no existe ninguno. Requiere `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` en el entorno, rechaza contrasenas de menos de 12 caracteres y serializa intentos concurrentes con un bloqueo transaccional. No hay credenciales predeterminadas ni ruta publica de alta de administradores.
 - Los usuarios nuevos tienen el rol `OPERADOR` por defecto.
 
+### Configuracion y capacidad del evento
+
+`ConfiguracionService` consulta y valida la configuracion `capacidad_maxima`; no ofrece rutas para modificarla. `CapacidadService.getSnapshot()` recibe un cliente transaccional de Prisma, bloquea la fila de configuracion antes de consultar la ocupacion y devuelve la capacidad, asistentes registrados, reservas vigentes, ocupacion y cupos disponibles. La ocupacion suma cada asistente y la cantidad de reservas `PENDIENTE` cuya expiracion sea posterior a una unica hora de referencia. El llamador debe ejecutar esta operacion dentro de la misma transaccion que consuma o libere cupos.
+
+`AsistentesService.registrarIndividual()` valida adultos y ninos, y registra cada asistente junto con el snapshot de capacidad en una transaccion `ReadCommitted`. Requiere un cupo disponible, asigna una boleta libre del 1 al 100, genera un codigo QR seguro y crea el registro sin grupo; no se expone mediante endpoints en esta subfase.
+
+`GruposService.crear()` valida previamente al lider y todos los miembros con las mismas reglas, y dentro de una transaccion `ReadCommitted` bloquea capacidad, asigna boletas y crea en orden al lider, el grupo y sus miembros. El creador permanece `null` mientras no haya autenticacion; no se exponen endpoints.
+
+`ReservasService.crear()` genera un token aleatorio, almacena solo su hash SHA-256 y crea una reserva `PENDIENTE` con vigencia de 24 horas. `confirmar()` requiere los datos completos de exactamente un asistente por cupo, valida cada uno con `AsistentesService` y crea los asistentes junto con la transición a `USADA` en una única transacción `ReadCommitted`. `expirarPendientesVencidas()` actualiza reservas vencidas bajo el bloqueo común de capacidad. No se implementa cancelación ni se exponen endpoints.
+
 ### Migracion inicial
 
 Verifica que `NEST_DATABASE_URL` sea la URL de la base nueva y vacia de Render antes de crear la migracion. Ejecuta `npm run db:migrate:create -- --name init`; el script invoca `prisma migrate dev --create-only` y no aplica la migracion. Revisa el SQL generado y agrega las restricciones `CHECK` anteriores antes de aprobar cualquier aplicacion. No ejecutes `prisma migrate dev` sin `--create-only` en esta fase.
