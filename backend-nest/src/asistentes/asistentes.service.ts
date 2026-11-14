@@ -11,9 +11,9 @@ import {
 import { Prisma, TipoAsistente } from '@prisma/client';
 import { CapacidadService } from '../capacidad/capacidad.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { POSTGRES_INT_MAX_VALUE } from '../prisma/postgres.constants';
 
 const NUMERO_BOLETA_MINIMO = 1;
-const NUMERO_BOLETA_MAXIMO = 100;
 const EDAD_MAXIMA_NINO = 7;
 const CODIGO_QR_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -345,7 +345,7 @@ export class AsistentesService {
     if (
       !Number.isInteger(cantidad) ||
       cantidad < 1 ||
-      cantidad > NUMERO_BOLETA_MAXIMO
+      cantidad > POSTGRES_INT_MAX_VALUE
     ) {
       throw new ConflictException('No hay números de boleta disponibles.');
     }
@@ -354,22 +354,29 @@ export class AsistentesService {
       select: { numeroBoleta: true },
       orderBy: { numeroBoleta: 'asc' },
     });
-    const ocupados = new Set(
-      asistentes.map((asistente) => asistente.numeroBoleta),
-    );
-
     const disponibles: number[] = [];
-    for (
-      let numero = NUMERO_BOLETA_MINIMO;
-      numero <= NUMERO_BOLETA_MAXIMO;
-      numero += 1
-    ) {
-      if (!ocupados.has(numero)) {
-        disponibles.push(numero);
-        if (disponibles.length === cantidad) {
-          return disponibles;
-        }
+    let siguiente = NUMERO_BOLETA_MINIMO;
+
+    for (const { numeroBoleta } of asistentes) {
+      while (siguiente < numeroBoleta && disponibles.length < cantidad) {
+        disponibles.push(siguiente);
+        siguiente += 1;
       }
+      if (disponibles.length === cantidad) return disponibles;
+      if (numeroBoleta >= siguiente) siguiente = numeroBoleta + 1;
+      if (siguiente > POSTGRES_INT_MAX_VALUE) break;
+    }
+
+    while (
+      siguiente <= POSTGRES_INT_MAX_VALUE &&
+      disponibles.length < cantidad
+    ) {
+      disponibles.push(siguiente);
+      siguiente += 1;
+    }
+
+    if (disponibles.length === cantidad) {
+      return disponibles;
     }
 
     throw new ConflictException('No hay números de boleta disponibles.');
@@ -384,7 +391,7 @@ export class AsistentesService {
     if (
       !Number.isInteger(numeroBoleta) ||
       numeroBoleta < NUMERO_BOLETA_MINIMO ||
-      numeroBoleta > NUMERO_BOLETA_MAXIMO
+      numeroBoleta > POSTGRES_INT_MAX_VALUE
     ) {
       throw new ConflictException('El número de boleta asignado no es válido.');
     }

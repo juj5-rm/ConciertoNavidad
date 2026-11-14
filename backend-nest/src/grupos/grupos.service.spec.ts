@@ -9,6 +9,7 @@ import { AsistentesService } from '../asistentes/asistentes.service';
 import { CapacidadService } from '../capacidad/capacidad.service';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CONSENT_VERSION } from './consentimiento.constants';
 import { CrearGrupoInput, GruposService } from './grupos.service';
 
 describe('GruposService', () => {
@@ -90,17 +91,22 @@ describe('GruposService', () => {
         }),
       },
       grupo: {
-        create: jest
-          .fn()
-          .mockImplementation(
-            (args: { data: { leaderId: string; createdById: null } }) => {
-              eventos.push('crear-grupo');
-              return Promise.resolve({
-                id: 'grupo-1',
-                leaderId: args.data.leaderId,
-              });
-            },
-          ),
+        create: jest.fn().mockImplementation(
+          (args: {
+            data: {
+              leaderId: string;
+              createdById: null;
+              consentimientoAceptadoAt: Date;
+              consentimientoVersion: string;
+            };
+          }) => {
+            eventos.push('crear-grupo');
+            return Promise.resolve({
+              id: 'grupo-1',
+              leaderId: args.data.leaderId,
+            });
+          },
+        ),
       },
     };
 
@@ -140,12 +146,31 @@ describe('GruposService', () => {
     );
   });
 
+  it('requires an adult leader and valid consent before opening a transaction', async () => {
+    await expect(
+      crearConConsentimiento({
+        lider: nino('Líder niño'),
+        miembros: [],
+      }),
+    ).rejects.toThrow('El líder del grupo debe ser un adulto.');
+
+    await expect(
+      service.crear({
+        lider: adulto('Líder'),
+        miembros: [],
+        consentimientoAceptado: false,
+        consentimientoVersion: CONSENT_VERSION,
+      }),
+    ).rejects.toThrow('La aceptación del tratamiento de datos es obligatoria.');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
 
   it('creates a group with an adult leader and adult members', async () => {
-    const result = await service.crear({
+    const result = await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
     });
@@ -160,19 +185,19 @@ describe('GruposService', () => {
   });
 
   it('creates a group with child participants', async () => {
-    const result = await service.crear({
-      lider: nino('Líder niño'),
+    const result = await crearConConsentimiento({
+      lider: adulto('Líder adulto'),
       miembros: [nino('Miembro niño', '2020-11-09')],
     });
 
-    expect(result.lider.tipo).toBe(TipoAsistente.NINO);
+    expect(result.lider.tipo).toBe(TipoAsistente.ADULTO);
     expect(result.miembros[0].tipo).toBe(TipoAsistente.NINO);
-    expect(asistentesCreados[0].correo).toBeNull();
+    expect(asistentesCreados[1].correo).toBeNull();
     expect(asistentesCreados[1].identificacion).toBeNull();
   });
 
   it('creates a group with a mixture of adults and children', async () => {
-    const result = await service.crear({
+    const result = await crearConConsentimiento({
       lider: adulto('Líder adulto'),
       miembros: [nino('Niño'), adulto('Miembro adulto')],
     });
@@ -189,7 +214,7 @@ describe('GruposService', () => {
 
   it('rejects an invalid leader before opening a transaction', async () => {
     await expect(
-      service.crear({
+      crearConConsentimiento({
         lider: { ...adulto('Líder'), correo: undefined },
         miembros: [],
       }),
@@ -199,7 +224,7 @@ describe('GruposService', () => {
 
   it('rejects an invalid member before opening a transaction', async () => {
     await expect(
-      service.crear({
+      crearConConsentimiento({
         lider: adulto('Líder'),
         miembros: [{ ...adulto('Miembro'), identificacion: undefined }],
       }),
@@ -209,7 +234,7 @@ describe('GruposService', () => {
 
   it('rejects a child member who has turned seven', async () => {
     await expect(
-      service.crear({
+      crearConConsentimiento({
         lider: adulto('Líder'),
         miembros: [nino('Miembro', '2019-11-10')],
       }),
@@ -221,7 +246,7 @@ describe('GruposService', () => {
     transaction.asistente.count.mockResolvedValue(98);
 
     await expect(
-      service.crear({
+      crearConConsentimiento({
         lider: adulto('Líder'),
         miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
       }),
@@ -235,7 +260,7 @@ describe('GruposService', () => {
     transaction.$queryRaw.mockResolvedValue([]);
 
     await expect(
-      service.crear({ lider: adulto('Líder'), miembros: [] }),
+      crearConConsentimiento({ lider: adulto('Líder'), miembros: [] }),
     ).rejects.toThrow(InternalServerErrorException);
     expect(transaction.asistente.create).not.toHaveBeenCalled();
     expect(transaction.grupo.create).not.toHaveBeenCalled();
@@ -247,7 +272,7 @@ describe('GruposService', () => {
       { numeroBoleta: 3 },
     ]);
 
-    await service.crear({
+    await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
     });
@@ -260,25 +285,25 @@ describe('GruposService', () => {
     ).toBe(3);
   });
 
-  it('rejects a group when the available ticket numbers are exhausted', async () => {
+  it('allocates ticket numbers above 100 when lower numbers are occupied', async () => {
     transaction.asistente.findMany.mockResolvedValue(
       Array.from({ length: 100 }, (_, index) => ({
         numeroBoleta: index + 1,
       })),
     );
 
-    await expect(
-      service.crear({
-        lider: adulto('Líder'),
-        miembros: [adulto('Miembro')],
-      }),
-    ).rejects.toThrow('No hay números de boleta disponibles.');
-    expect(transaction.asistente.create).not.toHaveBeenCalled();
-    expect(transaction.grupo.create).not.toHaveBeenCalled();
+    await crearConConsentimiento({
+      lider: adulto('Líder'),
+      miembros: [adulto('Miembro')],
+    });
+
+    expect(asistentesCreados.map(({ numeroBoleta }) => numeroBoleta)).toEqual([
+      101, 102,
+    ]);
   });
 
   it('generates an independent cryptographically formatted QR for each attendee', async () => {
-    const result = await service.crear({
+    const result = await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
     });
@@ -295,7 +320,7 @@ describe('GruposService', () => {
   });
 
   it('creates the leader before the group and the group before its members', async () => {
-    await service.crear({
+    await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
     });
@@ -309,7 +334,7 @@ describe('GruposService', () => {
   });
 
   it('uses the same transaction client for capacity, tickets, group, and members', async () => {
-    await service.crear({
+    await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro')],
     });
@@ -325,7 +350,7 @@ describe('GruposService', () => {
   });
 
   it('uses ReadCommitted isolation', async () => {
-    await service.crear({ lider: adulto('Líder'), miembros: [] });
+    await crearConConsentimiento({ lider: adulto('Líder'), miembros: [] });
 
     expect(opcionesTransaccion).toEqual({
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
@@ -336,7 +361,7 @@ describe('GruposService', () => {
     transaction.grupo.create.mockRejectedValue(new Error('database detail'));
 
     await expect(
-      service.crear({ lider: adulto('Líder'), miembros: [] }),
+      crearConConsentimiento({ lider: adulto('Líder'), miembros: [] }),
     ).rejects.toThrow(InternalServerErrorException);
     expect(rollback).toBe(true);
     expect(asistentesCreados).toHaveLength(1);
@@ -361,7 +386,7 @@ describe('GruposService', () => {
     );
 
     await expect(
-      service.crear({
+      crearConConsentimiento({
         lider: adulto('Líder'),
         miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
       }),
@@ -380,19 +405,24 @@ describe('GruposService', () => {
     );
 
     await expect(
-      service.crear({ lider: adulto('Líder'), miembros: [] }),
+      crearConConsentimiento({ lider: adulto('Líder'), miembros: [] }),
     ).rejects.toThrow(ConflictException);
     expect(rollback).toBe(true);
   });
 
   it('creates a standalone leader and associates only new members with the group', async () => {
-    await service.crear({
+    await crearConConsentimiento({
       lider: adulto('Líder'),
       miembros: [adulto('Miembro 1'), adulto('Miembro 2')],
     });
 
     expect(transaction.grupo.create).toHaveBeenCalledWith({
-      data: { leaderId: 'asistente-1', createdById: null },
+      data: {
+        leaderId: 'asistente-1',
+        createdById: null,
+        consentimientoAceptadoAt: fechaActual,
+        consentimientoVersion: CONSENT_VERSION,
+      },
       select: { id: true, leaderId: true },
     });
     expect(asistentesCreados.map(({ grupoId }) => grupoId)).toEqual([
@@ -409,6 +439,16 @@ describe('GruposService', () => {
       correo: `${nombre.toLowerCase().replaceAll(' ', '.')}@example.com`,
       identificacion: `ID-${nombre}`,
     };
+  }
+
+  function crearConConsentimiento(
+    input: Pick<CrearGrupoInput, 'lider' | 'miembros'>,
+  ) {
+    return service.crear({
+      ...input,
+      consentimientoAceptado: true,
+      consentimientoVersion: CONSENT_VERSION,
+    });
   }
 
   function nino(

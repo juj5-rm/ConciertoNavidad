@@ -8,6 +8,7 @@ import { Prisma, TipoAsistente } from '@prisma/client';
 import { CapacidadService } from '../capacidad/capacidad.service';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { POSTGRES_INT_MAX_VALUE } from '../prisma/postgres.constants';
 import {
   AsistentesService,
   RegistroAsistenteInput,
@@ -396,17 +397,26 @@ describe('AsistentesService', () => {
     expect(datosCreacion?.numeroBoleta).toBe(2);
   });
 
-  it('does not assign a ticket number outside 1..100', async () => {
+  it('assigns ticket numbers above 100 when lower numbers are occupied', async () => {
     transaction.asistente.findMany.mockResolvedValue(
       Array.from({ length: 100 }, (_, index) => ({
         numeroBoleta: index + 1,
       })),
     );
 
-    await expect(service.registrarIndividual(adulto())).rejects.toThrow(
-      'No hay números de boleta disponibles.',
-    );
-    expect(transaction.asistente.create).not.toHaveBeenCalled();
+    await service.registrarIndividual(adulto());
+
+    expect(datosCreacion?.numeroBoleta).toBe(101);
+  });
+
+  it('rejects a request for more ticket numbers than PostgreSQL Int can store', async () => {
+    await expect(
+      service.obtenerNumerosBoletaDisponibles(
+        transaction as unknown as Prisma.TransactionClient,
+        POSTGRES_INT_MAX_VALUE + 1,
+      ),
+    ).rejects.toThrow('No hay números de boleta disponibles.');
+    expect(transaction.asistente.findMany).not.toHaveBeenCalled();
   });
 
   it('translates a unique constraint failure and rolls back the transaction', async () => {

@@ -13,6 +13,7 @@ import { validateEnvironment } from './config/security.config';
 import { GruposModule } from './grupos/grupos.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReservasModule } from './reservas/reservas.module';
+import { UsuariosModule } from './usuarios/usuarios.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ReservasModule } from './reservas/reservas.module';
     AsistentesModule,
     GruposModule,
     ReservasModule,
+    UsuariosModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,10 +1,11 @@
 import {
   ExecutionContext,
   INestApplication,
+  Injectable,
   UnauthorizedException,
   ValidationPipe,
 } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { RolUsuario, TipoAsistente } from '@prisma/client';
 import request from 'supertest';
@@ -14,9 +15,24 @@ import { AsistentesService } from './asistentes/asistentes.service';
 import { CapacidadController } from './capacidad/capacidad.controller';
 import { CapacidadService } from './capacidad/capacidad.service';
 import { RolesGuard } from './auth/guards/roles.guard';
+import {
+  AUTH_ACCESS_POLICY_METADATA,
+  isAuthAccessPolicy,
+} from './auth/auth-access-policy';
+import { GruposController } from './grupos/grupos.controller';
+import { GruposService } from './grupos/grupos.service';
 
+@Injectable()
 class TestAuthenticationGuard {
+  constructor(private readonly reflector: Reflector) {}
+
   canActivate(context: ExecutionContext): boolean {
+    const policy = this.reflector.get<unknown>(
+      AUTH_ACCESS_POLICY_METADATA,
+      context.getHandler(),
+    );
+    if (isAuthAccessPolicy(policy) && policy.type === 'public') return true;
+
     const request = context.switchToHttp().getRequest<{
       headers: Record<string, string | undefined>;
       user?: { rol: RolUsuario };
@@ -63,11 +79,35 @@ describe('authorized business HTTP routes', () => {
       disponibles: 88,
     }),
     updateMaximumCapacity: jest.fn().mockResolvedValue({
-      capacidadMaxima: 80,
+      capacidadMaxima: 200,
       asistentesRegistrados: 12,
       reservasVigentes: 0,
       ocupacionTotal: 12,
-      disponibles: 68,
+      disponibles: 188,
+    }),
+  };
+  const gruposService = {
+    crear: jest.fn().mockResolvedValue({
+      id: 'internal-group-id',
+      leaderId: 'internal-leader-id',
+      lider: {
+        id: 'internal-leader-id',
+        nombre: 'Ana Ejemplo',
+        correo: 'ana@example.com',
+        identificacion: 'ID-101',
+        tipo: TipoAsistente.ADULTO,
+        codigoQr: 'adult-qr',
+        numeroBoleta: 101,
+      },
+      miembros: [
+        {
+          id: 'internal-child-id',
+          nombre: 'Luis Ejemplo',
+          tipo: TipoAsistente.NINO,
+          codigoQr: 'child-qr',
+          numeroBoleta: 102,
+        },
+      ],
     }),
   };
 
@@ -77,10 +117,15 @@ describe('authorized business HTTP routes', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [AsistentesController, CapacidadController],
+      controllers: [
+        AsistentesController,
+        CapacidadController,
+        GruposController,
+      ],
       providers: [
         { provide: AsistentesService, useValue: asistentesService },
         { provide: CapacidadService, useValue: capacidadService },
+        { provide: GruposService, useValue: gruposService },
         { provide: APP_GUARD, useClass: TestAuthenticationGuard },
         { provide: APP_GUARD, useClass: RolesGuard },
       ],
@@ -143,11 +188,11 @@ describe('authorized business HTTP routes', () => {
     const adminUpdate = await request(app.getHttpServer())
       .patch('/capacidad')
       .set('x-test-role', RolUsuario.ADMIN)
-      .send({ capacidadMaxima: 80 });
+      .send({ capacidadMaxima: 200 });
     const operatorUpdate = await request(app.getHttpServer())
       .patch('/capacidad')
       .set('x-test-role', RolUsuario.OPERADOR)
-      .send({ capacidadMaxima: 80 });
+      .send({ capacidadMaxima: 200 });
 
     expect(adminRead.status).toBe(200);
     expect((adminRead.body as { disponibles: number }).disponibles).toBe(88);
@@ -155,10 +200,90 @@ describe('authorized business HTTP routes', () => {
     expect(adminUpdate.status).toBe(200);
     expect(
       (adminUpdate.body as { capacidadMaxima: number }).capacidadMaxima,
-    ).toBe(80);
+    ).toBe(200);
     expect(operatorUpdate.status).toBe(403);
     expect(capacidadService.getAdministrativeSnapshot).toHaveBeenCalledTimes(1);
     expect(capacidadService.updateMaximumCapacity).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows public group registration without exposing internal or personal data', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/grupos/inscripcion')
+      .send({
+        adultos: [
+          {
+            nombre: 'Ana Ejemplo',
+            correo: 'ana@example.com',
+            identificacion: 'ID-101',
+          },
+        ],
+        ninos: [{ nombre: 'Luis Ejemplo', nacimiento: '2020-01-01' }],
+        consentimientoAceptado: true,
+        consentimientoVersion: '2026-11-13-v1',
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual({
+      asistentes: [
+        {
+          nombre: 'Ana Ejemplo',
+          tipo: TipoAsistente.ADULTO,
+          codigoQr: 'adult-qr',
+          numeroBoleta: 101,
+        },
+        {
+          nombre: 'Luis Ejemplo',
+          tipo: TipoAsistente.NINO,
+          codigoQr: 'child-qr',
+          numeroBoleta: 102,
+        },
+      ],
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal');
+    expect(JSON.stringify(response.body)).not.toContain('ana@example.com');
+    expect(gruposService.crear).toHaveBeenCalledWith(
+      expect.objectContaining({
+        consentimientoAceptado: true,
+        consentimientoVersion: '2026-11-13-v1',
+      }),
+    );
+  });
+
+  it('rejects public registration without an adult or consent', async () => {
+    const noAdult = await request(app.getHttpServer())
+      .post('/grupos/inscripcion')
+      .send({
+        adultos: [],
+        ninos: [],
+        consentimientoAceptado: true,
+        consentimientoVersion: '2026-11-13-v1',
+      });
+    const noConsent = await request(app.getHttpServer())
+      .post('/grupos/inscripcion')
+      .send({
+        adultos: [
+          {
+            nombre: 'Ana Ejemplo',
+            correo: 'ana@example.com',
+            identificacion: 'ID-101',
+          },
+        ],
+        ninos: [],
+        consentimientoAceptado: false,
+        consentimientoVersion: '2026-11-13-v1',
+      });
+    const privateAttendees = await request(app.getHttpServer()).get(
+      '/asistentes',
+    );
+    const privateCapacity = await request(app.getHttpServer()).get(
+      '/capacidad',
+    );
+
+    expect(noAdult.status).toBe(400);
+    expect(noConsent.status).toBe(400);
+    expect(privateAttendees.status).toBe(401);
+    expect(privateCapacity.status).toBe(401);
+    expect(gruposService.crear).not.toHaveBeenCalled();
   });
 
   it('rejects invalid payloads and requests without an authenticated role', async () => {

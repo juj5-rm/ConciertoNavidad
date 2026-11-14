@@ -1,97 +1,144 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useZxing } from "react-zxing";
-import api from "./api";
+import api, { getApiErrorMessage } from "./api";
+
+function formatDate(value) {
+  if (!value) return "No disponible";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "No disponible" : date.toLocaleString();
+}
 
 function Validacion() {
-  const [modal, setModal] = useState({
-    visible: false,
-    mensaje: "",
-    exito: false,
-  });
-  const [cameraActive, setCameraActive] = useState(true);
+  const [codigoQr, setCodigoQr] = useState("");
+  const [verification, setVerification] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const verificationLocked = useRef(false);
 
-  const { ref } = useZxing({
-    onDecodeResult(result) {
-      if (!cameraActive) return; // 🚫 si el modal está abierto, no escanea
-      const codigo = result.getText();
-      validarCodigo(codigo);
-    },
-    onError(err) {
-      console.error("Error de cámara:", err);
-    },
-    constraints: {
-      video: { facingMode: "environment" }, // cámara trasera
-    },
-  });
+  const verificarCodigo = async (value) => {
+    if (verificationLocked.current || !value) return;
 
-  const validarCodigo = async (codigo) => {
-    setCameraActive(false); // ⏸️ detener nuevas lecturas
+    verificationLocked.current = true;
+    setIsSubmitting(true);
+    setErrorMessage("");
+    setVerification(null);
+
     try {
-      const res = await api.post("/validar", { codigo_qr: codigo });
-
-      // Esperar 1 segundo antes de mostrar el modal (efecto natural)
-      setTimeout(() => {
-        setModal({
-          visible: true,
-          mensaje: `✅ ${res.data.message}\n${res.data.asistente.nombre}`,
-          exito: true,
-        });
-      }, 1000);
-    } catch (err) {
-      setTimeout(() => {
-        setModal({
-          visible: true,
-          mensaje: `❌ ${err.response?.data || "Error al validar QR"}`,
-          exito: false,
-        });
-      }, 1000);
+      const response = await api.post("/asistentes/verificar-qr", {
+        codigoQr: value,
+      });
+      setVerification(response.data);
+      setCodigoQr("");
+    } catch (error) {
+      setErrorMessage(
+        error.response?.status === 404
+          ? "No se encontró una entrada con ese código."
+          : getApiErrorMessage(error, "No fue posible verificar la entrada."),
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const cerrarModal = () => {
-    setModal({ ...modal, visible: false });
-    setCameraActive(true); // ▶️ reactivar cámara
+  const { ref } = useZxing({
+    onDecodeResult(result) {
+      if (!verificationLocked.current) {
+        verificarCodigo(result.getText());
+      }
+    },
+    onError() {
+      setCameraError("No se pudo iniciar la cámara. Puedes ingresar el código manualmente.");
+    },
+    constraints: { video: { facingMode: "environment" } },
+  });
+
+  const handleManualSubmit = (event) => {
+    event.preventDefault();
+    verificarCodigo(codigoQr.trim());
   };
 
+  const clearResult = () => {
+    verificationLocked.current = false;
+    setVerification(null);
+    setErrorMessage("");
+    setCameraError("");
+  };
+
+  const isRegistered = verification?.resultado === "INGRESO_REGISTRADO";
+
   return (
-    <div className="p-5 text-center">
-      <h1 className="text-2xl font-bold mb-4">Validación de QR 🎫</h1>
+    <main className="app-shell">
+      <header className="page-heading">
+        <h1>Verificación de entradas</h1>
+        <p className="subtitle">Escanea el código QR o ingrésalo manualmente.</p>
+        <div className="gold-line" />
+      </header>
 
-      <div className="max-w-md mx-auto relative">
-        <video
-          ref={ref}
-          className={`w-full rounded-lg shadow-md transition-opacity duration-300 ${
-            cameraActive ? "opacity-100" : "opacity-40"
-          }`}
-        />
-        {!cameraActive && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 text-white text-lg font-medium">
-            Pausado...
-          </div>
-        )}
-      </div>
+      <section className="panel scanner-panel" aria-label="Verificar entrada">
+        <div className="scanner-frame">
+          <video ref={ref} className="scanner-video" aria-label="Vista de la cámara" />
+        </div>
+        <p className="scanner-help">
+          Coloca el código QR dentro del recuadro. La verificación se envía una sola vez.
+        </p>
+        {cameraError && <p className="notice notice-info" role="status">{cameraError}</p>}
 
-      {/* Modal de validación */}
-      {modal.visible && (
-        <div
-          className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50"
-        >
-          <div
-            className={`p-6 rounded-2xl shadow-xl text-white text-center transition-all duration-300 ${
-              modal.exito ? "bg-green-500" : "bg-red-500"
-            }`}
-          >
-            <p className="whitespace-pre-line text-lg font-semibold">{modal.mensaje}</p>
-            <button
-              onClick={cerrarModal}
-              className="mt-4 bg-white text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-100"
-            >
-              Cerrar
+        <form className="manual-code-form" onSubmit={handleManualSubmit}>
+          <label htmlFor="codigoQr">Código QR</label>
+          <div className="manual-code-row">
+            <input
+              id="codigoQr"
+              type="text"
+              value={codigoQr}
+              onChange={(event) => setCodigoQr(event.target.value)}
+              autoComplete="off"
+              disabled={isSubmitting}
+              placeholder="Ingresa el código de la entrada"
+            />
+            <button className="primary-button" type="submit" disabled={isSubmitting || !codigoQr.trim()}>
+              {isSubmitting ? "Verificando..." : "Verificar"}
             </button>
           </div>
-        </div>
-      )}
-    </div>
+        </form>
+
+        {errorMessage && (
+          <div className="notice notice-error result-notice" role="alert">
+            <strong>Entrada no verificada</strong>
+            <span>{errorMessage}</span>
+            <button type="button" className="secondary-button" onClick={clearResult}>
+              Intentar otra vez
+            </button>
+          </div>
+        )}
+
+        {verification && (
+          <div
+            className={`notice result-notice ${isRegistered ? "notice-success" : "notice-warning"}`}
+            role="status"
+          >
+            <strong>
+              {isRegistered
+                ? "Ingreso registrado"
+                : "Entrada ya utilizada"}
+            </strong>
+            <span>
+              {isRegistered
+                ? "La entrada quedó validada correctamente."
+                : "Esta entrada ya había sido validada."}
+            </span>
+            <dl className="verification-details">
+              <div><dt>Número de boleta</dt><dd>{verification.numeroBoleta}</dd></div>
+              <div><dt>Tipo de asistente</dt><dd>{verification.tipo}</dd></div>
+              <div><dt>Fecha de validación</dt><dd>{formatDate(verification.validadoAt)}</dd></div>
+            </dl>
+            <button type="button" className="secondary-button" onClick={clearResult}>
+              Verificar otra entrada
+            </button>
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 

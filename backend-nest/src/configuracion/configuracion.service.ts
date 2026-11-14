@@ -5,8 +5,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { POSTGRES_INT_MAX_VALUE } from '../prisma/postgres.constants';
 
-const CAPACIDAD_MAXIMA_PERMITIDA = 100;
 const CLAVE_CAPACIDAD_MAXIMA = 'capacidad_maxima';
 
 type ConfiguracionClient = {
@@ -64,7 +64,11 @@ export class ConfiguracionService {
   validateCapacityChange(capacidad: number, ocupacionActual: number): number {
     this.validateCapacityValue(capacidad);
 
-    if (!Number.isInteger(ocupacionActual) || ocupacionActual < 0) {
+    if (
+      !Number.isInteger(ocupacionActual) ||
+      ocupacionActual < 0 ||
+      ocupacionActual > POSTGRES_INT_MAX_VALUE
+    ) {
       throw new BadRequestException('La ocupación actual no es válida.');
     }
 
@@ -80,7 +84,7 @@ export class ConfiguracionService {
   validateCapacityValue(capacidad: number): void {
     if (!this.isValidCapacity(capacidad)) {
       throw new BadRequestException(
-        'La capacidad debe ser un entero entre 0 y 100.',
+        `La capacidad debe ser un entero positivo no mayor que ${POSTGRES_INT_MAX_VALUE}.`,
       );
     }
   }
@@ -88,8 +92,8 @@ export class ConfiguracionService {
   private isValidCapacity(capacidad: number): boolean {
     return (
       Number.isInteger(capacidad) &&
-      capacidad >= 0 &&
-      capacidad <= CAPACIDAD_MAXIMA_PERMITIDA
+      capacidad >= 1 &&
+      capacidad <= POSTGRES_INT_MAX_VALUE
     );
   }
 }

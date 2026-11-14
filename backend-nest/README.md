@@ -27,7 +27,7 @@
 
 ## Migracion de datos - Bloque 2
 
-La aplicacion NestJS utiliza exclusivamente `NEST_DATABASE_URL`, independiente de las variables del backend Express. Configura esa variable localmente con la URL de la nueva base PostgreSQL de Render. No copies la conexion del backend anterior. `.env` esta excluido de Git; `.env.example` solo contiene marcadores, nunca credenciales.
+La aplicacion NestJS utiliza `NEST_DATABASE_URL`, independiente de las variables del backend Express. Prisma CLI carga `backend-nest/.env.local` con precedencia sobre el entorno heredado y rechaza destinos que no sean `127.0.0.1:5433/conciertonavidad_dev`. Mantener intacto `.env`; no copiar configuraciones de produccion a la base local.
 
 Prisma 7 se configura en `prisma.config.ts`; el cliente usa el adaptador PostgreSQL `@prisma/adapter-pg`. El schema aprobado contiene `Usuario`, `Grupo`, `Asistente`, `Reserva` y `ConfiguracionEvento`. `TipoAsistente.NINO` es el identificador interno. Los tokens de reserva se almacenan como hash SHA-256 hexadecimal en `tokenHash`; el token original no se persiste.
 
@@ -35,36 +35,7 @@ Prisma 7 se configura en `prisma.config.ts`; el cliente usa el adaptador Postgre
 
 Prisma genera las claves primarias, foraneas, indices y restricciones `UNIQUE` declaradas en el schema. No se deben duplicar esas restricciones con SQL.
 
-La migracion inicial debe incluir estas restricciones PostgreSQL personalizadas, que Prisma no expresa en el schema:
-
-```sql
-ALTER TABLE "Asistente"
-  ADD CONSTRAINT "Asistente_tipo_campos_check"
-  CHECK (
-    ("tipo" = 'ADULTO'
-      AND length(btrim("nombre")) > 0
-      AND "correo" IS NOT NULL AND length(btrim("correo")) > 0
-      AND "identificacion" IS NOT NULL AND length(btrim("identificacion")) > 0
-      AND "nacimiento" IS NULL)
-    OR
-    ("tipo" = 'NINO'
-      AND length(btrim("nombre")) > 0
-      AND "correo" IS NULL AND "identificacion" IS NULL
-      AND "nacimiento" IS NOT NULL)
-  );
-
-ALTER TABLE "Asistente"
-  ADD CONSTRAINT "Asistente_numeroBoleta_rango_check"
-  CHECK ("numeroBoleta" BETWEEN 1 AND 100);
-
-ALTER TABLE "ConfiguracionEvento"
-  ADD CONSTRAINT "ConfiguracionEvento_capacidad_maxima_rango_check"
-  CHECK ("clave" <> 'capacidad_maxima' OR "valor" BETWEEN 0 AND 100);
-
-ALTER TABLE "Reserva"
-  ADD CONSTRAINT "Reserva_cantidad_positiva_check"
-  CHECK ("cantidad" > 0);
-```
+Las restricciones PostgreSQL personalizadas no expresadas en el schema se mantienen en las migraciones. La migracion inicial valida los campos segun el tipo de asistente y las reservas positivas. La migracion aditiva `20261113120000_capacity_and_registration_consent` elimina el tope de 100 para capacidad y boletas, exige valores positivos para la capacidad y los numeros de boleta, y agrega a `Grupo` la fecha/hora y version del consentimiento con una restriccion de evidencia completa. Los grupos existentes conservan ambos campos en `NULL`.
 
 La edad menor de 7 anos se valida en NestJS: no se agrega una expresion `CHECK` basada en la fecha actual, porque PostgreSQL no permite de forma fiable una funcion no inmutable en esa clase de constraint. La pertenencia simultanea como lider y miembro tambien requiere validacion transaccional del dominio; no es una restriccion de fila.
 
@@ -76,19 +47,17 @@ La edad menor de 7 anos se valida en NestJS: no se agrega una expresion `CHECK` 
 
 ### Configuracion y capacidad del evento
 
-`ConfiguracionService` consulta y valida la configuracion `capacidad_maxima`; no ofrece rutas para modificarla. `CapacidadService.getSnapshot()` recibe un cliente transaccional de Prisma, bloquea la fila de configuracion antes de consultar la ocupacion y devuelve la capacidad, asistentes registrados, reservas vigentes, ocupacion y cupos disponibles. La ocupacion suma cada asistente y la cantidad de reservas `PENDIENTE` cuya expiracion sea posterior a una unica hora de referencia. El llamador debe ejecutar esta operacion dentro de la misma transaccion que consuma o libere cupos.
+`ConfiguracionService` valida `capacidad_maxima` como entero positivo compatible con PostgreSQL `Int`. ADMIN puede modificarla, pero no reducirla por debajo de la ocupacion actual. El valor `100` del seed es un valor inicial y el seed no sobrescribe una configuracion existente. `CapacidadService.getSnapshot()` bloquea la fila de configuracion antes de consultar la ocupacion y devuelve capacidad, asistentes registrados, reservas vigentes, ocupacion y cupos disponibles dentro de la transaccion del llamador.
 
-`AsistentesService.registrarIndividual()` valida adultos y ninos, y registra cada asistente junto con el snapshot de capacidad en una transaccion `ReadCommitted`. Requiere un cupo disponible, asigna una boleta libre del 1 al 100, genera un codigo QR seguro y crea el registro sin grupo; no se expone mediante endpoints en esta subfase.
+`AsistentesService.registrarIndividual()` valida adultos y ninos, exige un cupo disponible, asigna el primer numero de boleta libre positivo compatible con PostgreSQL `Int` y genera un codigo QR seguro. La numeracion ya no tiene un tope de 100.
 
-`GruposService.crear()` valida previamente al lider y todos los miembros con las mismas reglas, y dentro de una transaccion `ReadCommitted` bloquea capacidad, asigna boletas y crea en orden al lider, el grupo y sus miembros. El creador permanece `null` mientras no haya autenticacion; no se exponen endpoints.
+`POST /grupos/inscripcion` es el unico endpoint publico del modulo de grupos. Acepta uno o mas adultos y cero o mas ninos; el primer adulto es el lider. Requiere consentimiento y una version vigente del texto. `GruposService.crear()` vuelve a validar los participantes y, en una sola transaccion `ReadCommitted`, bloquea la capacidad vigente, comprueba los cupos de todo el grupo y crea lider, grupo y miembros. La fecha/hora y version del consentimiento se guardan en `Grupo`; no se crean reservas pendientes. La respuesta publica contiene solo nombre, tipo, QR y numero de boleta de cada integrante.
 
-`ReservasService.crear()` genera un token aleatorio, almacena solo su hash SHA-256 y crea una reserva `PENDIENTE` con vigencia de 24 horas. `confirmar()` requiere los datos completos de exactamente un asistente por cupo, valida cada uno con `AsistentesService` y crea los asistentes junto con la transición a `USADA` en una única transacción `ReadCommitted`. `expirarPendientesVencidas()` actualiza reservas vencidas bajo el bloqueo común de capacidad. No se implementa cancelación ni se exponen endpoints.
+El servicio interno de reservas conserva su comportamiento legado; la inscripcion publica grupal no crea ni confirma reservas y no expone operaciones de reserva.
 
-### Migracion inicial
+### Migraciones
 
-Verifica que `NEST_DATABASE_URL` sea la URL de la base nueva y vacia de Render antes de crear la migracion. Ejecuta `npm run db:migrate:create -- --name init`; el script invoca `prisma migrate dev --create-only` y no aplica la migracion. Revisa el SQL generado y agrega las restricciones `CHECK` anteriores antes de aprobar cualquier aplicacion. No ejecutes `prisma migrate dev` sin `--create-only` en esta fase.
-
-Estado de esta revision: schema validado y Prisma Client generado. La migracion no se ha creado ni aplicado porque `NEST_DATABASE_URL` no estaba definida en el entorno; por tanto, no fue posible confirmar el destino Render ni obtener el SQL generado por `migrate dev --create-only`. No se ejecutaron comandos contra la base Express.
+Las migraciones de desarrollo se aplican unicamente despues de confirmar el destino local. La migracion aditiva de consentimiento y rangos de capacidad se aplico a `conciertonavidad_dev` en `127.0.0.1:5433`; no modifica ni reconstruye tablas y conserva los grupos existentes sin evidencia historica de consentimiento.
 
 ## Project setup
 

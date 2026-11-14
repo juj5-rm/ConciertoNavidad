@@ -1,101 +1,103 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
+  provider = "postgresql"
 }
 
 enum TipoAsistente {
-    ADULTO
-    NINO
+  ADULTO
+  NINO
 }
 
 enum RolUsuario {
-    ADMIN
-    OPERADOR
+  ADMIN
+  OPERADOR
 }
 
 enum EstadoGrupo {
-    ACTIVO
-    CERRADO
-    CANCELADO
+  ACTIVO
+  CERRADO
+  CANCELADO
 }
 
 enum EstadoReserva {
-    PENDIENTE
-    USADA
-    EXPIRADA
-    CANCELADA
+  PENDIENTE
+  USADA
+  EXPIRADA
+  CANCELADA
 }
 
 model Usuario {
-    id           String     @id @default(uuid())
-    email        String     @unique
-    passwordHash String
-    rol          RolUsuario @default(OPERADOR)
-    activo       Boolean    @default(true)
-    createdAt    DateTime   @default(now())
-    updatedAt    DateTime   @updatedAt
-    lastLoginAt  DateTime?
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  rol          RolUsuario @default(OPERADOR)
+  activo       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  lastLoginAt  DateTime?
 
-    gruposCreados Grupo[]
+  gruposCreados Grupo[]
 }
 
 model ConfiguracionEvento {
-    id          String   @id @default(uuid())
-    clave       String   @unique
-    valor       Int
-    descripcion String?
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+  id          String   @id @default(uuid())
+  clave       String   @unique
+  valor       Int
+  descripcion String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Grupo {
-    id          String      @id @default(uuid())
-    leaderId    String      @unique
-    createdById String?
-    estado      EstadoGrupo @default(ACTIVO)
-    createdAt   DateTime    @default(now())
-    updatedAt   DateTime    @updatedAt
+  id                       String      @id @default(uuid())
+  leaderId                 String      @unique
+  createdById              String?
+  consentimientoAceptadoAt DateTime?
+  consentimientoVersion    String?
+  estado                   EstadoGrupo @default(ACTIVO)
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
 
-    lider      Asistente   @relation("GrupoLider", fields: [leaderId], references: [id], onDelete: Restrict)
-    creador    Usuario?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-    asistentes Asistente[] @relation("GrupoMiembros")
+  lider      Asistente   @relation("GrupoLider", fields: [leaderId], references: [id], onDelete: Restrict)
+  creador    Usuario?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  asistentes Asistente[] @relation("GrupoMiembros")
 }
 
 model Asistente {
-    id             String        @id @default(uuid())
-    nombre         String
-    correo         String?
-    identificacion String?
-    nacimiento     DateTime?     @db.Date
-    tipo           TipoAsistente
-    codigoQr       String        @unique
-    numeroBoleta   Int           @unique
-    validado       Boolean       @default(false)
-    validadoAt     DateTime?
-    grupoId        String?
-    createdAt      DateTime      @default(now())
-    updatedAt      DateTime      @updatedAt
+  id             String        @id @default(uuid())
+  nombre         String
+  correo         String?
+  identificacion String?
+  nacimiento     DateTime?     @db.Date
+  tipo           TipoAsistente
+  codigoQr       String        @unique
+  numeroBoleta   Int           @unique
+  validado       Boolean       @default(false)
+  validadoAt     DateTime?
+  grupoId        String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-    grupo        Grupo? @relation("GrupoMiembros", fields: [grupoId], references: [id], onDelete: Restrict)
-    liderDeGrupo Grupo? @relation("GrupoLider")
+  grupo        Grupo? @relation("GrupoMiembros", fields: [grupoId], references: [id], onDelete: Restrict)
+  liderDeGrupo Grupo? @relation("GrupoLider")
 
-    @@index([grupoId])
-    @@index([tipo])
-    @@index([validado])
+  @@index([grupoId])
+  @@index([tipo])
+  @@index([validado])
 }
 
 model Reserva {
-    id         String        @id @default(uuid())
-    tokenHash  String        @unique @db.Char(64)
-    cantidad   Int
-    expiracion DateTime
-    estado     EstadoReserva @default(PENDIENTE)
-    createdAt  DateTime      @default(now())
-    updatedAt  DateTime      @updatedAt
-    usedAt     DateTime?
+  id         String        @id @default(uuid())
+  tokenHash  String        @unique @db.Char(64)
+  cantidad   Int
+  expiracion DateTime
+  estado     EstadoReserva @default(PENDIENTE)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  usedAt     DateTime?
 
-    @@index([estado, expiracion])
+  @@index([estado, expiracion])
 }

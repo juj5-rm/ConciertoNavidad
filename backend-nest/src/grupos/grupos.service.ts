@@ -5,7 +5,7 @@ import {
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, TipoAsistente } from '@prisma/client';
 import {
   AsistenteRegistrado,
   AsistentesService,
@@ -13,10 +13,13 @@ import {
 } from '../asistentes/asistentes.service';
 import { CapacidadService } from '../capacidad/capacidad.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CONSENT_VERSION } from './consentimiento.constants';
 
 export interface CrearGrupoInput {
   lider: RegistroAsistenteInput;
   miembros: RegistroAsistenteInput[];
+  consentimientoAceptado: boolean;
+  consentimientoVersion: string;
 }
 
 export interface GrupoCreado {
@@ -37,6 +40,14 @@ export class GruposService {
   async crear(input: CrearGrupoInput): Promise<GrupoCreado> {
     const participantes = this.validarParticipantes(input);
     const cantidadTotal = participantes.length;
+    if (
+      input.consentimientoAceptado !== true ||
+      input.consentimientoVersion !== CONSENT_VERSION
+    ) {
+      throw new BadRequestException(
+        'La aceptación del tratamiento de datos es obligatoria.',
+      );
+    }
 
     try {
       return await this.prisma.$transaction(
@@ -66,6 +77,8 @@ export class GruposService {
             data: {
               leaderId: lider.id,
               createdById: null,
+              consentimientoAceptadoAt: new Date(),
+              consentimientoVersion: input.consentimientoVersion,
             },
             select: { id: true, leaderId: true },
           });
@@ -116,6 +129,9 @@ export class GruposService {
     }
 
     const lider = this.asistentesService.validarDatos(input.lider);
+    if (lider.tipo !== TipoAsistente.ADULTO) {
+      throw new BadRequestException('El líder del grupo debe ser un adulto.');
+    }
     const miembros = input.miembros.map((miembro) =>
       this.asistentesService.validarDatos(miembro),
     );

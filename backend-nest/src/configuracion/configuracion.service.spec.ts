@@ -1,5 +1,9 @@
-import { InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { POSTGRES_INT_MAX_VALUE } from '../prisma/postgres.constants';
 import { ConfiguracionService } from './configuracion.service';
 
 describe('ConfiguracionService', () => {
@@ -37,7 +41,7 @@ describe('ConfiguracionService', () => {
     );
   });
 
-  it.each([-1, 101, 20.5])(
+  it.each([-1, 0, POSTGRES_INT_MAX_VALUE + 1, 20.5])(
     'rejects invalid stored capacity %s',
     async (valor) => {
       findUnique.mockResolvedValue({
@@ -57,6 +61,22 @@ describe('ConfiguracionService', () => {
       'La capacidad no puede ser inferior a la ocupación actual.',
     );
   });
+
+  it('accepts a capacity above 100 up to the PostgreSQL Int maximum', () => {
+    expect(() => service.validateCapacityChange(200, 150)).not.toThrow();
+    expect(() =>
+      service.validateCapacityChange(POSTGRES_INT_MAX_VALUE, 150),
+    ).not.toThrow();
+  });
+
+  it.each([0, -1, 1.5, POSTGRES_INT_MAX_VALUE + 1])(
+    'rejects invalid capacity changes %s',
+    (capacity) => {
+      expect(() => service.validateCapacityChange(capacity, 0)).toThrow(
+        BadRequestException,
+      );
+    },
+  );
 
   it('updates the existing capacity configuration through the supplied client', async () => {
     update.mockResolvedValue({
@@ -86,7 +106,7 @@ describe('ConfiguracionService', () => {
       service.updateCapacityConfiguration(-1, {
         configuracionEvento: { findUnique, update },
       }),
-    ).rejects.toThrow('La capacidad debe ser un entero entre 0 y 100.');
+    ).rejects.toThrow(BadRequestException);
     expect(update).not.toHaveBeenCalled();
   });
 });

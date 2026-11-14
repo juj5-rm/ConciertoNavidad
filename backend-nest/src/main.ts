@@ -28,7 +28,7 @@ async function bootstrap() {
       forbidUnknownValues: true,
     }),
   );
-  await app.listen(security.port);
+  await app.listen(security.port, '0.0.0.0');
 }
 
 void bootstrap();

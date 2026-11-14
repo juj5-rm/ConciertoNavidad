@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { EstadoReserva, Prisma } from '@prisma/client';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { POSTGRES_INT_MAX_VALUE } from '../prisma/postgres.constants';
 import { CapacidadService } from './capacidad.service';
 
 describe('CapacidadService', () => {
@@ -54,9 +55,13 @@ describe('CapacidadService', () => {
       valor: 100,
     });
     validateCapacityValue = jest.fn((capacidad: number) => {
-      if (!Number.isInteger(capacidad) || capacidad < 0 || capacidad > 100) {
+      if (
+        !Number.isInteger(capacidad) ||
+        capacidad < 1 ||
+        capacidad > POSTGRES_INT_MAX_VALUE
+      ) {
         throw new BadRequestException(
-          'La capacidad debe ser un entero entre 0 y 100.',
+          'La capacidad debe ser un entero positivo válido.',
         );
       }
     });
@@ -229,7 +234,7 @@ describe('CapacidadService', () => {
     });
   });
 
-  it('rejects capacity below occupancy and above the configured maximum', async () => {
+  it('rejects capacity below occupancy and allows values above 100', async () => {
     transaction.asistente.count.mockResolvedValue(60);
 
     await expect(service.updateMaximumCapacity(59)).rejects.toThrow(
@@ -237,10 +242,18 @@ describe('CapacidadService', () => {
     );
     expect(updateCapacityConfiguration).not.toHaveBeenCalled();
 
-    await expect(service.updateMaximumCapacity(101)).rejects.toThrow(
-      'La capacidad debe ser un entero entre 0 y 100.',
-    );
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    updateCapacityConfiguration.mockResolvedValue({
+      id: 'config-1',
+      clave: 'capacidad_maxima',
+      valor: 200,
+    });
+    await expect(service.updateMaximumCapacity(200)).resolves.toMatchObject({
+      capacidadMaxima: 200,
+    });
+    expect(updateCapacityConfiguration).toHaveBeenCalledWith(200, transaction);
+    await expect(
+      service.updateMaximumCapacity(POSTGRES_INT_MAX_VALUE + 1),
+    ).rejects.toThrow('La capacidad debe ser un entero positivo válido.');
   });
 
   it('rejects lowering capacity when occupancy exceeds the allowed maximum', async () => {
