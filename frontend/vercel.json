@@ -1,5 +1,5 @@
-
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "builds": [
     {
@@ -8,10 +8,14 @@
       "config": {
         "distDir": "build"
       }
+    },
+    {
+      "src": "api/proxy.js",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api/proxy.js?path=$1" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
-
