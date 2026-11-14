@@ -13,7 +13,6 @@ import Asistentes from "./Asistentes";
 import Capacidad from "./Capacidad";
 import RequireAuth from "./RequireAuth";
 import InscripcionGrupal from "./InscripcionGrupal";
-import Usuarios from "./Usuarios";
 import "./referencia/index.css";
 import "./referencia/App.css";
 import "./operaciones.css";
@@ -47,14 +46,6 @@ function App() {
             element={
               <RequireAuth roles={["ADMIN"]}>
                 <Capacidad />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/usuarios"
-            element={
-              <RequireAuth roles={["ADMIN"]}>
-                <Usuarios />
               </RequireAuth>
             }
           />

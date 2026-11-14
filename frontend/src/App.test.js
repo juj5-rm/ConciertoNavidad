@@ -113,7 +113,6 @@ const operator = {
 };
 
 beforeEach(() => {
-  jest.restoreAllMocks();
   window.history.pushState({}, "", "/");
   api.get.mockReset();
   api.post.mockReset();
@@ -156,104 +155,6 @@ test("restaura sesión de OPERADOR sin mostrar navegación administrativa", asyn
   expect(
     screen.queryByRole("link", { name: "Capacidad" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("link", { name: "Gestión de usuarios" }),
-  ).not.toBeInTheDocument();
-});
-
-test("restringe la ruta de gestión de usuarios al ADMIN", async () => {
-  window.history.pushState({}, "", "/usuarios");
-  api.get.mockResolvedValue({ data: { user: operator } });
-
-  render(<App />);
-
-  expect(await screen.findByText("Verificación QR")).toBeInTheDocument();
-  expect(
-    screen.queryByRole("heading", { name: "Gestión de usuarios" }),
-  ).not.toBeInTheDocument();
-});
-
-test("permite al ADMIN gestionar operadores sin exponer contraseñas", async () => {
-  window.history.pushState({}, "", "/usuarios");
-  const firstOperator = {
-    id: "operator-1",
-    email: "operator@example.com",
-    rol: "OPERADOR",
-    activo: true,
-    createdAt: "2026-11-14T12:00:00.000Z",
-  };
-  const newOperator = {
-    id: "operator-2",
-    email: "new@example.com",
-    rol: "OPERADOR",
-    activo: true,
-    createdAt: "2026-11-14T12:00:00.000Z",
-  };
-  api.get.mockImplementation((path) =>
-    Promise.resolve({
-      data:
-        path === "/auth/me"
-          ? { user: admin }
-          : { operadores: [firstOperator] },
-    }),
-  );
-  api.post.mockResolvedValue({ data: { operador: newOperator } });
-  api.patch
-    .mockResolvedValueOnce({
-      data: { operador: { ...newOperator, email: "updated@example.com" } },
-    })
-    .mockResolvedValueOnce({
-      data: { operador: { ...newOperator, email: "updated@example.com", activo: false } },
-    })
-    .mockResolvedValueOnce({
-      data: { operador: { ...newOperator, email: "updated@example.com", activo: true } },
-    });
-  jest.spyOn(window, "confirm").mockReturnValue(true);
-
-  render(<App />);
-
-  expect(
-    await screen.findByRole("heading", { name: "Gestión de usuarios" }),
-  ).toBeInTheDocument();
-  expect(await screen.findByText("operator@example.com")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Nuevo operador" }));
-  fireEvent.change(screen.getByLabelText("Correo electrónico"), {
-    target: { value: "new@example.com" },
-  });
-  fireEvent.change(screen.getByLabelText("Contraseña"), {
-    target: { value: "a-secure-operator-password" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Crear operador" }));
-
-  expect(await screen.findByText("new@example.com")).toBeInTheDocument();
-  expect(api.post).toHaveBeenCalledWith("/usuarios/operadores", {
-    email: "new@example.com",
-    password: "a-secure-operator-password",
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Editar new@example.com" }));
-  expect(screen.getByLabelText("Nueva contraseña (opcional)")).toHaveValue("");
-  fireEvent.change(screen.getByLabelText("Correo electrónico"), {
-    target: { value: "updated@example.com" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-  expect(await screen.findByText("updated@example.com")).toBeInTheDocument();
-  expect(api.patch).toHaveBeenCalledWith("/usuarios/operadores/operator-2", {
-    email: "updated@example.com",
-  });
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Desactivar updated@example.com" }),
-  );
-  expect(await screen.findByText("Desactivado")).toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Activar updated@example.com" }),
-  );
-  expect(
-    await screen.findByRole("button", {
-      name: "Desactivar updated@example.com",
-    }),
-  ).toBeInTheDocument();
-  expect(JSON.stringify(api.post.mock.calls)).not.toContain("passwordHash");
 });
 
 test("muestra el listado con el contrato mínimo de NestJS", async () => {

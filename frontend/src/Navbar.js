@@ -34,7 +34,6 @@ function Navbar() {
               <>
                 <NavLink to="/asistentes">Asistentes</NavLink>
                 <NavLink to="/capacidad">Capacidad</NavLink>
-                <NavLink to="/usuarios">Gestión de usuarios</NavLink>
               </>
             )}
             {!isLoading && !user && (
