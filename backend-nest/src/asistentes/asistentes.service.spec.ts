@@ -23,10 +23,15 @@ describe('AsistentesService', () => {
       count: jest.Mock;
       findMany: jest.Mock;
       create: jest.Mock;
+      updateMany: jest.Mock;
+      findUnique: jest.Mock;
     };
     reserva: { aggregate: jest.Mock };
   };
-  let prisma: { $transaction: jest.Mock };
+  let prisma: {
+    $transaction: jest.Mock;
+    asistente: { findMany: jest.Mock };
+  };
   let eventos: string[];
   let opcionesTransaccion:
     { isolationLevel?: Prisma.TransactionIsolationLevel } | undefined;
@@ -79,6 +84,8 @@ describe('AsistentesService', () => {
               });
             },
           ),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn(),
       },
       reserva: {
         aggregate: jest.fn().mockImplementation(() => {
@@ -88,7 +95,10 @@ describe('AsistentesService', () => {
       },
     };
 
-    prisma = { $transaction: jest.fn() };
+    prisma = {
+      $transaction: jest.fn(),
+      asistente: { findMany: jest.fn() },
+    };
     prisma.$transaction.mockImplementation(
       async (
         callback: (client: Prisma.TransactionClient) => Promise<unknown>,
@@ -109,7 +119,10 @@ describe('AsistentesService', () => {
     const configuracionService = new ConfiguracionService(
       prisma as unknown as PrismaService,
     );
-    const capacidadService = new CapacidadService(configuracionService);
+    const capacidadService = new CapacidadService(
+      prisma as unknown as PrismaService,
+      configuracionService,
+    );
     service = new AsistentesService(
       prisma as unknown as PrismaService,
       capacidadService,
@@ -143,6 +156,155 @@ describe('AsistentesService', () => {
     expect(opcionesTransaccion).toEqual({
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
+  });
+
+  it('records a valid QR entry atomically and returns only minimal fields', async () => {
+    const validadoAt = new Date(fechaActual);
+    transaction.asistente.findUnique.mockResolvedValue({
+      numeroBoleta: 12,
+      tipo: TipoAsistente.ADULTO,
+      validado: true,
+      validadoAt,
+    });
+
+    const result = await service.verificarIngreso('A'.repeat(43));
+
+    expect(result).toEqual({
+      resultado: 'INGRESO_REGISTRADO',
+      numeroBoleta: 12,
+      tipo: TipoAsistente.ADULTO,
+      validadoAt,
+    });
+    expect(transaction.asistente.updateMany).toHaveBeenCalledWith({
+      where: {
+        codigoQr: 'A'.repeat(43),
+        validado: false,
+        validadoAt: null,
+      },
+      data: { validado: true, validadoAt },
+    });
+    expect(transaction.asistente.findUnique).toHaveBeenCalledWith({
+      where: { codigoQr: 'A'.repeat(43) },
+      select: {
+        numeroBoleta: true,
+        tipo: true,
+        validado: true,
+        validadoAt: true,
+      },
+    });
+    expect(opcionesTransaccion?.isolationLevel).toBe(
+      Prisma.TransactionIsolationLevel.ReadCommitted,
+    );
+    expect(JSON.stringify(result)).not.toContain('codigoQr');
+    expect(JSON.stringify(result)).not.toContain('correo');
+    expect(JSON.stringify(result)).not.toContain('identificacion');
+    expect(JSON.stringify(result)).not.toContain('nacimiento');
+  });
+
+  it('reports an already validated QR without changing its original validation time', async () => {
+    const validadoAt = new Date('2026-11-09T12:00:00.000Z');
+    transaction.asistente.updateMany.mockResolvedValue({ count: 0 });
+    transaction.asistente.findUnique.mockResolvedValue({
+      numeroBoleta: 12,
+      tipo: TipoAsistente.ADULTO,
+      validado: true,
+      validadoAt,
+    });
+
+    await expect(service.verificarIngreso('B'.repeat(43))).resolves.toEqual({
+      resultado: 'YA_VALIDADO',
+      numeroBoleta: 12,
+      tipo: TipoAsistente.ADULTO,
+      validadoAt,
+    });
+    expect(transaction.asistente.updateMany).toHaveBeenCalledTimes(1);
+    expect(transaction.asistente.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes a missing QR from an inconsistent validation state', async () => {
+    transaction.asistente.updateMany.mockResolvedValue({ count: 0 });
+    transaction.asistente.findUnique.mockResolvedValue(null);
+
+    await expect(service.verificarIngreso('C'.repeat(43))).rejects.toThrow(
+      'La entrada no existe.',
+    );
+
+    transaction.asistente.findUnique.mockResolvedValue({
+      numeroBoleta: 12,
+      tipo: TipoAsistente.ADULTO,
+      validado: true,
+      validadoAt: null,
+    });
+    await expect(service.verificarIngreso('D'.repeat(43))).rejects.toThrow(
+      InternalServerErrorException,
+    );
+  });
+
+  it('rejects malformed QR strings before opening a transaction', async () => {
+    await expect(service.verificarIngreso('not-a-qr')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('maps one atomic QR update and one concurrent no-op to the correct outcomes', async () => {
+    let validatedAt: Date | null = null;
+    transaction.asistente.updateMany.mockImplementation(
+      (args: { data: { validadoAt: Date } }) => {
+        if (validatedAt) return Promise.resolve({ count: 0 });
+
+        validatedAt = args.data.validadoAt;
+        return Promise.resolve({ count: 1 });
+      },
+    );
+    transaction.asistente.findUnique.mockImplementation(() =>
+      Promise.resolve({
+        numeroBoleta: 12,
+        tipo: TipoAsistente.ADULTO,
+        validado: true,
+        validadoAt: validatedAt,
+      }),
+    );
+
+    const results = await Promise.all([
+      service.verificarIngreso('E'.repeat(43)),
+      service.verificarIngreso('E'.repeat(43)),
+    ]);
+
+    expect(results.map(({ resultado }) => resultado).sort()).toEqual([
+      'INGRESO_REGISTRADO',
+      'YA_VALIDADO',
+    ]);
+    expect(results[0].validadoAt).toEqual(results[1].validadoAt);
+  });
+
+  it('lists only approved attendee fields in stable ticket order', async () => {
+    const asistentes = [
+      {
+        numeroBoleta: 1,
+        nombre: 'Ana',
+        tipo: TipoAsistente.ADULTO,
+        validado: false,
+        validadoAt: null,
+      },
+    ];
+    prisma.asistente.findMany.mockResolvedValue(asistentes);
+    const result = await service.listar();
+
+    expect(result).toEqual({ asistentes, total: 1 });
+    expect(prisma.asistente.findMany).toHaveBeenCalledWith({
+      select: {
+        numeroBoleta: true,
+        nombre: true,
+        tipo: true,
+        validado: true,
+        validadoAt: true,
+      },
+      orderBy: { numeroBoleta: 'asc' },
+    });
+    expect(JSON.stringify(result)).not.toContain('codigoQr');
+    expect(JSON.stringify(result)).not.toContain('correo');
+    expect(JSON.stringify(result)).not.toContain('identificacion');
   });
 
   it('registers a child who is still six years old', async () => {

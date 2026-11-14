@@ -5,6 +5,7 @@ import {
   HttpException,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma, TipoAsistente } from '@prisma/client';
@@ -14,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const NUMERO_BOLETA_MINIMO = 1;
 const NUMERO_BOLETA_MAXIMO = 100;
 const EDAD_MAXIMA_NINO = 7;
+const CODIGO_QR_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export interface RegistroAsistenteInput {
   tipo: TipoAsistente;
@@ -31,6 +33,28 @@ export interface AsistenteRegistrado {
   numeroBoleta: number;
 }
 
+export interface AsistenteListado {
+  numeroBoleta: number;
+  nombre: string;
+  tipo: TipoAsistente;
+  validado: boolean;
+  validadoAt: Date | null;
+}
+
+export type VerificacionIngresoResultado =
+  | {
+      resultado: 'INGRESO_REGISTRADO';
+      numeroBoleta: number;
+      tipo: TipoAsistente;
+      validadoAt: Date;
+    }
+  | {
+      resultado: 'YA_VALIDADO';
+      numeroBoleta: number;
+      tipo: TipoAsistente;
+      validadoAt: Date;
+    };
+
 export interface DatosAsistenteValidados {
   tipo: TipoAsistente;
   nombre: string;
@@ -45,6 +69,91 @@ export class AsistentesService {
     private readonly prisma: PrismaService,
     private readonly capacidadService: CapacidadService,
   ) {}
+
+  async verificarIngreso(
+    codigoQr: string,
+  ): Promise<VerificacionIngresoResultado> {
+    if (typeof codigoQr !== 'string' || !CODIGO_QR_PATTERN.test(codigoQr)) {
+      throw new BadRequestException('El código QR no es válido.');
+    }
+
+    try {
+      return await this.prisma.$transaction(
+        async (transaction) => {
+          const validadoAt = new Date();
+          const resultado = await transaction.asistente.updateMany({
+            where: {
+              codigoQr,
+              validado: false,
+              validadoAt: null,
+            },
+            data: {
+              validado: true,
+              validadoAt,
+            },
+          });
+
+          const asistente = await transaction.asistente.findUnique({
+            where: { codigoQr },
+            select: {
+              numeroBoleta: true,
+              tipo: true,
+              validado: true,
+              validadoAt: true,
+            },
+          });
+
+          if (!asistente) {
+            throw new NotFoundException('La entrada no existe.');
+          }
+
+          if (!asistente.validado || !asistente.validadoAt) {
+            throw new InternalServerErrorException(
+              'No fue posible verificar el estado de la entrada.',
+            );
+          }
+
+          return {
+            resultado:
+              resultado.count === 1 ? 'INGRESO_REGISTRADO' : 'YA_VALIDADO',
+            numeroBoleta: asistente.numeroBoleta,
+            tipo: asistente.tipo,
+            validadoAt: asistente.validadoAt,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+      );
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        'No fue posible verificar la entrada.',
+      );
+    }
+  }
+
+  async listar(): Promise<{ asistentes: AsistenteListado[]; total: number }> {
+    try {
+      const asistentes = await this.prisma.asistente.findMany({
+        select: {
+          numeroBoleta: true,
+          nombre: true,
+          tipo: true,
+          validado: true,
+          validadoAt: true,
+        },
+        orderBy: { numeroBoleta: 'asc' },
+      });
+
+      return { asistentes, total: asistentes.length };
+    } catch {
+      throw new InternalServerErrorException(
+        'No fue posible consultar el listado de asistentes.',
+      );
+    }
+  }
 
   async registrarIndividual(
     input: RegistroAsistenteInput,

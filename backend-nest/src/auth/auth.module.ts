@@ -7,7 +7,6 @@ import type { SecurityConfiguration } from '../config/security.config';
 import { AUTH_SECURITY_CONFIGURATION } from './auth.constants';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { createJwtOptions } from './jwt.options';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -29,7 +28,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   providers: [
     AuthService,
     JwtStrategy,
-    JwtAuthGuard,
     {
       provide: AUTH_SECURITY_CONFIGURATION,
       inject: [ConfigService],
@@ -37,6 +35,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         configService.getOrThrow<SecurityConfiguration>('security'),
     },
   ],
-  exports: [AuthService, JwtAuthGuard],
+  exports: [AuthService],
 })
-export class AuthModule { }
+export class AuthModule {}

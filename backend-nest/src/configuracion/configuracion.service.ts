@@ -9,10 +9,12 @@ import { PrismaService } from '../prisma/prisma.service';
 const CAPACIDAD_MAXIMA_PERMITIDA = 100;
 const CLAVE_CAPACIDAD_MAXIMA = 'capacidad_maxima';
 
-type ConfiguracionClient = Pick<
-  Prisma.TransactionClient,
-  'configuracionEvento'
->;
+type ConfiguracionClient = {
+  configuracionEvento: Pick<
+    Prisma.TransactionClient['configuracionEvento'],
+    'findUnique' | 'update'
+  >;
+};
 
 @Injectable()
 export class ConfiguracionService {
@@ -44,6 +46,19 @@ export class ConfiguracionService {
   async getMaximumCapacity(): Promise<number> {
     const configuration = await this.getCapacityConfiguration();
     return configuration.valor;
+  }
+
+  async updateCapacityConfiguration(
+    capacidad: number,
+    client: ConfiguracionClient,
+  ): Promise<{ id: string; clave: string; valor: number }> {
+    this.validateCapacityValue(capacidad);
+
+    return client.configuracionEvento.update({
+      where: { clave: CLAVE_CAPACIDAD_MAXIMA },
+      data: { valor: capacidad },
+      select: { id: true, clave: true, valor: true },
+    });
   }
 
   validateCapacityChange(capacidad: number, ocupacionActual: number): number {

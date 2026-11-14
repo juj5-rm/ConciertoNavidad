@@ -162,7 +162,10 @@ describe('ReservasService', () => {
     const configuracionService = new ConfiguracionService(
       prisma as unknown as PrismaService,
     );
-    const capacidadService = new CapacidadService(configuracionService);
+    const capacidadService = new CapacidadService(
+      prisma as unknown as PrismaService,
+      configuracionService,
+    );
     const asistentesService = new AsistentesService(
       prisma as unknown as PrismaService,
       capacidadService,

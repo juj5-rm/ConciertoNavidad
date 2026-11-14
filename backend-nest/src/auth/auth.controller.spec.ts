@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { RolUsuario } from '@prisma/client';
 import {
   createAuthCookieClearOptions,
   createAuthCookieOptions,
@@ -6,8 +7,8 @@ import {
 } from '../config/security.config';
 import { AuthService, LoginResult } from './auth.service';
 import { AuthController } from './auth.controller';
+import { AUTH_ACCESS_POLICY_METADATA } from './auth-access-policy';
 import { LoginDto } from './dto/login.dto';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from './auth.types';
 
 jest.mock('@nestjs/passport', () => ({
@@ -19,7 +20,7 @@ jest.mock('@nestjs/passport', () => ({
     },
 }));
 jest.mock('@nestjs/jwt', () => ({
-  JwtService: class JwtService { },
+  JwtService: class JwtService {},
 }));
 
 describe('AuthController', () => {
@@ -115,7 +116,10 @@ describe('AuthController', () => {
       throw new Error('Expected the /auth/me handler to exist.');
     }
     const handler = descriptor.value as (...args: unknown[]) => unknown;
-    expect(Reflect.getMetadata('__guards__', handler)).toContain(JwtAuthGuard);
+    expect(Reflect.getMetadata(AUTH_ACCESS_POLICY_METADATA, handler)).toEqual({
+      type: 'roles',
+      roles: [RolUsuario.ADMIN, RolUsuario.OPERADOR],
+    });
   });
 
   it('clears the configured cookie with immediate expiration and no maxAge', () => {

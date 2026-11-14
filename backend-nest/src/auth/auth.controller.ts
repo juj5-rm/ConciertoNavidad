@@ -8,8 +8,8 @@ import {
   Post,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
+import { RolUsuario } from '@prisma/client';
 import type { Response } from 'express';
 import {
   createAuthCookieClearOptions,
@@ -17,8 +17,9 @@ import {
 } from '../config/security.config';
 import type { SecurityConfiguration } from '../config/security.config';
 import { AUTH_SECURITY_CONFIGURATION } from './auth.constants';
+import { Public } from './decorators/public.decorator';
+import { Roles } from './decorators/roles.decorator';
 import { AuthService, AuthenticatedUser } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from './auth.types';
 import { LoginDto } from './dto/login.dto';
 
@@ -40,6 +41,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Public()
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() credentials: LoginDto,
@@ -59,7 +61,7 @@ export class AuthController {
   }
 
   @Get('me')
-  @UseGuards(JwtAuthGuard)
+  @Roles(RolUsuario.ADMIN, RolUsuario.OPERADOR)
   getCurrentUser(@Req() request: AuthenticatedRequest): {
     user: AuthenticatedUser;
   } {
@@ -67,6 +69,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Public()
   @HttpCode(HttpStatus.OK)
   logout(@Res({ passthrough: true }) response: Response): {
     message: string;

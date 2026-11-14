@@ -1,6 +1,7 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { EstadoReserva, Prisma } from '@prisma/client';
 import { ConfiguracionService } from '../configuracion/configuracion.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CapacidadService } from './capacidad.service';
 
 describe('CapacidadService', () => {
@@ -11,12 +12,19 @@ describe('CapacidadService', () => {
     asistente: { count: jest.Mock };
     reserva: { aggregate: jest.Mock };
   };
+  let prisma: { $transaction: jest.Mock };
   let getCapacityConfiguration: jest.Mock;
+  let validateCapacityValue: jest.Mock;
+  let validateCapacityChange: jest.Mock;
+  let updateCapacityConfiguration: jest.Mock;
+  let transactionOptions:
+    { isolationLevel?: Prisma.TransactionIsolationLevel } | undefined;
   let lockQuery: TemplateStringsArray | undefined;
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(fechaReferencia);
     lockQuery = undefined;
+    transactionOptions = undefined;
     transaction = {
       $queryRaw: jest.fn().mockImplementation((query: TemplateStringsArray) => {
         lockQuery = query;
@@ -27,14 +35,54 @@ describe('CapacidadService', () => {
         aggregate: jest.fn().mockResolvedValue({ _sum: { cantidad: null } }),
       },
     };
+    prisma = {
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          async (
+            callback: (client: Prisma.TransactionClient) => Promise<unknown>,
+            options: { isolationLevel?: Prisma.TransactionIsolationLevel },
+          ) => {
+            transactionOptions = options;
+            return callback(transaction as unknown as Prisma.TransactionClient);
+          },
+        ),
+    };
     getCapacityConfiguration = jest.fn().mockResolvedValue({
       id: 'config-1',
       clave: 'capacidad_maxima',
       valor: 100,
     });
-    service = new CapacidadService({
-      getCapacityConfiguration,
-    } as unknown as ConfiguracionService);
+    validateCapacityValue = jest.fn((capacidad: number) => {
+      if (!Number.isInteger(capacidad) || capacidad < 0 || capacidad > 100) {
+        throw new BadRequestException(
+          'La capacidad debe ser un entero entre 0 y 100.',
+        );
+      }
+    });
+    validateCapacityChange = jest.fn((capacidad: number, ocupacion: number) => {
+      validateCapacityValue(capacidad);
+      if (capacidad < ocupacion) {
+        throw new BadRequestException(
+          'La capacidad no puede ser inferior a la ocupación actual.',
+        );
+      }
+      return capacidad;
+    });
+    updateCapacityConfiguration = jest.fn().mockResolvedValue({
+      id: 'config-1',
+      clave: 'capacidad_maxima',
+      valor: 100,
+    });
+    service = new CapacidadService(
+      prisma as unknown as PrismaService,
+      {
+        getCapacityConfiguration,
+        validateCapacityValue,
+        validateCapacityChange,
+        updateCapacityConfiguration,
+      } as unknown as ConfiguracionService,
+    );
   });
 
   afterEach(() => {
@@ -129,6 +177,79 @@ describe('CapacidadService', () => {
     transaction.asistente.count.mockResolvedValue(101);
 
     await expect(getSnapshot()).rejects.toThrow(ConflictException);
+  });
+
+  it('returns over-capacity occupancy to the administrative snapshot', async () => {
+    transaction.asistente.count.mockResolvedValue(101);
+
+    await expect(service.getAdministrativeSnapshot()).resolves.toEqual({
+      capacidadMaxima: 100,
+      asistentesRegistrados: 101,
+      reservasVigentes: 0,
+      ocupacionTotal: 101,
+      disponibles: -1,
+    });
+    expect(transactionOptions?.isolationLevel).toBe(
+      Prisma.TransactionIsolationLevel.ReadCommitted,
+    );
+  });
+
+  it('updates capacity under the common lock and returns the resulting snapshot', async () => {
+    transaction.asistente.count.mockResolvedValue(50);
+
+    await expect(service.updateMaximumCapacity(75)).resolves.toEqual({
+      capacidadMaxima: 75,
+      asistentesRegistrados: 50,
+      reservasVigentes: 0,
+      ocupacionTotal: 50,
+      disponibles: 25,
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(validateCapacityChange).toHaveBeenCalledWith(75, 50);
+    expect(updateCapacityConfiguration).toHaveBeenCalledWith(75, transaction);
+    expect(transactionOptions?.isolationLevel).toBe(
+      Prisma.TransactionIsolationLevel.ReadCommitted,
+    );
+  });
+
+  it('allows raising capacity to recover an over-capacity configuration', async () => {
+    getCapacityConfiguration.mockResolvedValue({
+      id: 'config-1',
+      clave: 'capacidad_maxima',
+      valor: 60,
+    });
+    transaction.asistente.count.mockResolvedValue(80);
+
+    await expect(service.updateMaximumCapacity(90)).resolves.toMatchObject({
+      capacidadMaxima: 90,
+      ocupacionTotal: 80,
+      disponibles: 10,
+    });
+  });
+
+  it('rejects capacity below occupancy and above the configured maximum', async () => {
+    transaction.asistente.count.mockResolvedValue(60);
+
+    await expect(service.updateMaximumCapacity(59)).rejects.toThrow(
+      'La capacidad no puede ser inferior a la ocupación actual.',
+    );
+    expect(updateCapacityConfiguration).not.toHaveBeenCalled();
+
+    await expect(service.updateMaximumCapacity(101)).rejects.toThrow(
+      'La capacidad debe ser un entero entre 0 y 100.',
+    );
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects lowering capacity when occupancy exceeds the allowed maximum', async () => {
+    transaction.asistente.count.mockResolvedValue(101);
+
+    await expect(service.updateMaximumCapacity(100)).rejects.toThrow(
+      'La capacidad no puede ser inferior a la ocupación actual.',
+    );
+    expect(updateCapacityConfiguration).not.toHaveBeenCalled();
   });
 
   it('locks the capacity row before querying occupancy', async () => {
