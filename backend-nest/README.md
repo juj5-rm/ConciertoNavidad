@@ -43,7 +43,13 @@ La edad menor de 7 anos se valida en NestJS: no se agrega una expresion `CHECK` 
 
 - `npm run db:seed` crea `capacidad_maxima = 100` si aun no existe y no sobrescribe un valor ya configurado.
 - `npm run bootstrap:admin` crea el primer administrador solo cuando no existe ninguno. Requiere `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` en el entorno, rechaza contrasenas de menos de 12 caracteres y serializa intentos concurrentes con un bloqueo transaccional. No hay credenciales predeterminadas ni ruta publica de alta de administradores.
-- Los usuarios nuevos tienen el rol `OPERADOR` por defecto.
+- El rol por defecto del modelo `Usuario` es `OPERADOR`. La API de gestion no tiene registro publico y solo ADMIN puede crear operadores; el rol de esas cuentas se fija en `OPERADOR`.
+
+### Gestion de operadores
+
+Solo ADMIN puede usar `GET` y `POST /usuarios/operadores`, `PATCH /usuarios/operadores/:id` y `PATCH /usuarios/operadores/:id/estado`. La creacion y el cambio opcional de contrasena usan bcrypt con costo 12; las respuestas nunca incluyen el hash. Los correos se normalizan y se validan sin distincion de mayusculas.
+
+La eliminacion es logica: desactivar una cuenta conserva su historial y evita el inicio de sesion. `JwtStrategy` vuelve a comprobar `Usuario.activo` en cada solicitud protegida, por lo que tambien invalida las sesiones existentes del operador. No existe eliminacion fisica de usuarios desde esta API.
 
 ### Configuracion y capacidad del evento
 

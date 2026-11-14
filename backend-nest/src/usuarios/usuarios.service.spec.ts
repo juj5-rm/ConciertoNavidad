@@ -33,11 +33,14 @@ describe('UsuariosService', () => {
     };
   };
   let service: UsuariosService;
-  const hashMock = hash as jest.MockedFunction<typeof hash>;
+  const hashMock = hash as unknown as jest.Mock<
+    Promise<string>,
+    [string, number]
+  >;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    hashMock.mockImplementation(() => Promise.resolve('$2b$12$stored-hash'));
+    hashMock.mockResolvedValue('$2b$12$stored-hash');
     prisma = {
       usuario: {
         findMany: jest.fn().mockResolvedValue([operator]),
